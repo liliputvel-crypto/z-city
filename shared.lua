@@ -1,8 +1,8 @@
 ENT.Base = "ent_hg_grenade"
 ENT.Spawnable = false
-ENT.Model = "models/weapons/tfa_ins2/w_m67.mdl"
-ENT.spoon = "models/weapons/arc9/darsu_eft/skobas/m67_skoba.mdl"
-ENT.timeToBoom = 5
-ENT.Fragmentation = 350 * 2 -- 450 уже страшно
-ENT.BlastDis = 5 --meters
-ENT.Penetration = 7
+ENT.Model = "models/w_models/weapons/w_jj_pipebomb.mdl"
+ENT.timeToBoom = 4
+ENT.Fragmentation = 270 * 2
+ENT.BlastDis = 4 --meters
+ENT.Penetration = 5.5
+ENT.NotSpoon = true
