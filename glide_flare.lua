@@ -1,102 +1,101 @@
-function EFFECT:Init( data )
-    local origin = data:GetOrigin()
-    local scale = data:GetScale()
+AddCSLuaFile()
 
-    local emitter = ParticleEmitter( origin, false )
-    if not IsValid( emitter ) then return end
+ENT.Type = "anim"
+ENT.Base = "base_anim"
+ENT.PrintName = "Flare Countermeasure"
 
-    self:Flare( emitter, origin, scale )
-    self:Smoke( emitter, origin, scale )
+ENT.Spawnable = false
+ENT.AdminOnly = false
 
-    emitter:Finish()
-end
+ENT.PhysgunDisabled = true
+ENT.DoNotDuplicate = true
+ENT.DisableDuplicator = true
 
-function EFFECT:Think()
-    return false
-end
+-- Hint for Glide missiles
+ENT.IsCountermeasure = true
 
-function EFFECT:Render()
-end
+local CurTime = CurTime
 
-local RandomInt = math.random
-local RandomFloat = math.Rand
-
-local FLARE1_MATERIAL = "glide/effects/red_flare"
-local FLARE2_MATERIAL = "effects/yellowflare"
-
-function EFFECT:Flare( emitter, origin, scale )
-    local p = emitter:Add( FLARE1_MATERIAL, origin )
-
-    if p then
-        local size = RandomFloat( 10, 100 ) * scale
-
-        p:SetDieTime( 0.03 )
-        p:SetStartAlpha( 255 )
-        p:SetEndAlpha( 200 )
-        p:SetStartSize( size )
-        p:SetEndSize( size )
-        p:SetRoll( RandomFloat( -1, 1 ) )
-        p:SetColor( 255, 100, 100 )
-        p:SetLighting( false )
-        p:SetCollide( true )
-    end
-
-    p = emitter:Add( FLARE2_MATERIAL, origin )
-
-    if p then
-        local size = RandomFloat( 15, 30 ) * scale
-
-        p:SetDieTime( 0.03 )
-        p:SetStartAlpha( 255 )
-        p:SetEndAlpha( 200 )
-        p:SetStartSize( size )
-        p:SetEndSize( size )
-        p:SetRoll( RandomFloat( -1, 1 ) )
-        p:SetColor( 255, 255, 255 )
-        p:SetLighting( false )
-        p:SetCollide( true )
-    end
-end
-
-local SMOKE_MATERIAL = "particle/smokesprites_000"
-local SMOKE_GRAVITY = Vector( 0, 0, 400 )
-
-function EFFECT:Smoke( emitter, origin, scale )
-    local p
-
-    for _ = 1, 8 do
-        p = emitter:Add( SMOKE_MATERIAL .. RandomInt( 9 ), origin )
-
-        if p then
-            p:SetDieTime( RandomFloat( 0.4, 2 ) )
-            p:SetStartAlpha( 80 )
-            p:SetEndAlpha( 0 )
-            p:SetStartSize( RandomFloat( 5, 10 ) * scale )
-            p:SetEndSize( RandomFloat( 20, 40 ) * scale )
-            p:SetRoll( RandomFloat( -1, 1 ) )
-
-            p:SetAirResistance( 200 )
-            p:SetGravity( SMOKE_GRAVITY )
-            p:SetVelocity( VectorRand() * RandomFloat( -100, 100 ) * scale )
-            p:SetColor( 200, 30, 20 )
-            p:SetCollide( true )
+if CLIENT then
+    function ENT:Initialize()
+        if not self.flareLoop then
+            self.flareLoop = CreateSound( self, ")weapons/flaregun/burn.wav" )
+            self.flareLoop:SetSoundLevel( 75 )
+            self.flareLoop:PlayEx( 0.5, 110 )
         end
     end
 
-    p = emitter:Add( SMOKE_MATERIAL .. RandomInt( 9 ), origin )
-
-    if p then
-        p:SetDieTime( RandomFloat( 0.4, 3 ) )
-        p:SetStartAlpha( 50 )
-        p:SetEndAlpha( 0 )
-        p:SetStartSize( 2 * scale )
-        p:SetEndSize( RandomFloat( 50, 80 ) * scale )
-        p:SetRoll( RandomFloat( -1, 1 ) )
-
-        p:SetAirResistance( 200 )
-        p:SetGravity( SMOKE_GRAVITY )
-        p:SetVelocity( VectorRand() * RandomFloat( -100, 100 ) * scale )
-        p:SetColor( 20, 20, 20 )
-        p:SetCollide( true )
+    function ENT:OnRemove()
+        if self.flareLoop then
+            self.flareLoop:Stop()
+            self.flareLoop = nil
+        end
     end
+
+    local Effect = util.Effect
+    local EffectData = EffectData
+
+    function ENT:Think()
+        self:SetNextClientThink( CurTime() + 0.03 )
+
+        local eff = EffectData()
+        eff:SetOrigin( self:GetPos() )
+        eff:SetScale( 1 )
+        Effect( "glide_flare", eff )
+
+        return true
+    end
+end
+
+if not SERVER then return end
+
+function ENT:Initialize()
+    self:SetModel( "models/items/flare.mdl" )
+    self:PhysicsInitSphere( 4 )
+    self:DrawShadow( false )
+
+    local phys = self:GetPhysicsObject()
+
+    if IsValid( phys ) then
+        phys:Wake()
+        phys:SetAngleDragCoefficient( 1 )
+        phys:SetDragCoefficient( 0 )
+        phys:EnableGravity( true )
+        phys:SetMass( 5 )
+    end
+
+    self.lifeTime = CurTime() + 10
+
+    Glide.TrackFlare( self )
+end
+
+function ENT:Think()
+    local t = CurTime()
+
+    if t > self.lifeTime or self:WaterLevel() > 0 then
+        self:Remove()
+        return false
+    end
+
+    self:NextThink( t )
+
+    -- Custom drag
+    local phys = self:GetPhysicsObject()
+
+    if IsValid( phys ) then
+        local dt = FrameTime()
+        local vel = phys:GetVelocity()
+
+        vel[1] = vel[1] - vel[1] * dt * 0.5
+        vel[2] = vel[2] - vel[2] * dt * 0.5
+        vel[3] = vel[3] - vel[3] * dt * 2
+
+        phys:SetVelocityInstantaneous( vel )
+    end
+
+    return true
+end
+
+function ENT:OnTakeDamage()
+    self:Remove()
 end
