@@ -1,5 +1,7 @@
 ENT.Type = "anim"
-ENT.Base = "base_anim"
-ENT.PrintName = "ent_hg_breachcharge"
-ENT.Spawnable = false
-ENT.NextBeep = 0
+ENT.Author = "Mannytko"
+ENT.Category = "ZCity Other"
+ENT.PrintName = "Bugbait"
+ENT.Spawnable = true
+ENT.AdminOnly = false
+ENT.IconOverride = "entities/weapon_bugbait.png"
