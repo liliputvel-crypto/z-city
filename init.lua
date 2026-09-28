@@ -3,57 +3,123 @@ AddCSLuaFile("shared.lua")
 include("shared.lua")
 
 function ENT:Initialize()
-	self:SetModel(self.Model)
-	self:PhysicsInit(SOLID_VPHYSICS)
-	self:SetMoveType(MOVETYPE_VPHYSICS)
-	self:SetSolid(SOLID_VPHYSICS)
-	self:SetCollisionGroup(COLLISION_GROUP_WEAPON)
-	timer.Simple(0.2,function()
-		if not IsValid(self) then return end
-		self:SetCollisionGroup(COLLISION_GROUP_NONE)
-	end)
-	self:SetUseType(ONOFF_USE)
-	self:DrawShadow(true)
-	local phys = self:GetPhysicsObject()
-	if IsValid(phys) then
-		phys:SetMass(5)
-		phys:Wake()
-		phys:EnableMotion(true)
-	end
-	self.timeToBoom = math.Rand(2,7)
+    self:SetModel(self.Model)
+    self:PhysicsInit(SOLID_VPHYSICS)
+    if SERVER then
+        self:SetMoveType(MOVETYPE_VPHYSICS)
+    end
+    self:SetSolid(SOLID_VPHYSICS)
+    self:SetCollisionGroup(COLLISION_GROUP_WEAPON)
+    self:DrawShadow(true)
+    self:AddEFlags(EFL_IN_SKYBOX)
+    
+    local phys = self:GetPhysicsObject()
+
+    if SERVER and IsValid(phys) then
+        phys:SetMass(10)
+        phys:Wake()
+        phys:EnableMotion(true)
+    end
 end
 
-function ENT:AddThink()
-	if not self.timer then return end
-	self.nextthink = self.nextthink or CurTime()
-	if self.nextthink > CurTime() then return end
-	local time = self.timeToBoom - (CurTime() - self.timer)
+hook.Add("OnEntityCreated", "radioCreate", function( ent )
+	if ent:GetClass() == "ent_hg_hmcd_radio" then
+		SetGlobalEntity("radio",ent)
+	end
+end)
 
-	self.nextthink = CurTime() + 0.02
+util.AddNetworkString("RadioURLInput")
+util.AddNetworkString("PlayRadioSound")
+util.AddNetworkString("RadioChangeValue")
+util.AddNetworkString("RadioChangeVolume")
+util.AddNetworkString("RadioPause")
+util.AddNetworkString("RadioStop")
+util.AddNetworkString("RadioLooping")
+util.AddNetworkString("paint_radio")
+
+net.Receive("RadioURLInput", function(len, ply)
+	local url = net.ReadString()
+	local ent = net.ReadEntity()
 	
-	if not self.Exploded and not self.SndStarted then
-		self.SndStarted = true
-		self.snd = self:StartLoopingSound("snds_jack_gmod/flareburn.wav")
-		hg.EmitAISound(self:GetPos(), 256, 5, 8)
-	end
+	if ent:GetClass() != "ent_hg_hmcd_radio" or (ent:GetPos():Distance(ply:EyePos()) > 75) then return end
 
-	if not self.Exploded then
-		local Spark=EffectData()
-		Spark:SetOrigin(self:GetPos()+self:GetUp()*7)
-		Spark:SetScale(1)
-		Spark:SetNormal(self:GetUp())
-		util.Effect("eff_jack_hmcd_fuzeburn",Spark,true,true)
-	end
+	net.Start("PlayRadioSound")
+	net.WriteString(url)
+	net.WriteInt(ent:EntIndex(),32)
+	net.Broadcast()
+end)
 
-	if time < 0 and not self.Exploded then self:Explode() end
-	--self:NextThink(CurTime() + 0.5 * math.max(time / (self.timeToBoom * 0.75),0.5))
-	--return true
-end
-function ENT:ExplodeAdd()
-	self:StopLoopingSound(self.snd)
-end
+net.Receive("paint_radio", function(len, ply)
+	local url = net.ReadString()
+	local ent = net.ReadEntity()
 
-function ENT:PoopBomb()
-	self:StopLoopingSound(self.snd)
-	return math.random(1, 100) < 5
-end
+	if ent:GetClass() != "ent_hg_hmcd_radio" or (ent:GetPos():Distance(ply:EyePos()) > 75) then return end
+
+	ent:SetTextureURL( url )
+
+	
+	net.Start("paint_radio")
+		net.WriteString( url )
+		net.WriteEntity( ent )
+	net.Broadcast()
+end)
+
+net.Receive("RadioChangeValue", function(len, ply)
+	local val = net.ReadFloat()
+	local index = net.ReadInt(32)
+	local ent = Entity(index)
+
+	if ent:GetClass() != "ent_hg_hmcd_radio" or (ent:GetPos():Distance(ply:EyePos()) > 75) then return end
+
+	net.Start("RadioChangeValue")
+	net.WriteFloat(val)
+	net.WriteInt(index,32)
+	net.Broadcast()
+end)
+
+net.Receive("RadioChangeVolume", function(len, ply)
+	local val = net.ReadFloat()
+	local index = net.ReadInt(32)
+	local ent = Entity(index)
+	
+	if ent:GetClass() != "ent_hg_hmcd_radio" or (ent:GetPos():Distance(ply:EyePos()) > 75) then return end
+
+	net.Start("RadioChangeVolume")
+	net.WriteFloat(val)
+	net.WriteInt(index,32)
+	net.Broadcast()
+end)
+
+net.Receive("RadioPause", function(len, ply)
+	local bool = net.ReadBool()
+	local ent = net.ReadEntity()
+	
+	if ent:GetClass() != "ent_hg_hmcd_radio" or (ent:GetPos():Distance(ply:EyePos()) > 75) then return end
+	
+	net.Start("RadioPause")
+		net.WriteBool(bool)
+		net.WriteInt(ent:EntIndex(),32)
+	net.Broadcast()
+end)
+
+net.Receive("RadioLooping", function(len, ply)
+	local bool = net.ReadBool()
+	local ent = net.ReadEntity()
+
+	if ent:GetClass() != "ent_hg_hmcd_radio" or (ent:GetPos():Distance(ply:EyePos()) > 75) then return end
+
+	net.Start("RadioLooping")
+		net.WriteBool(bool)
+		net.WriteInt(ent:EntIndex(),32)
+	net.Broadcast()
+end)
+
+net.Receive("RadioStop", function(len, ply)
+	local ent = net.ReadEntity()
+
+	if ent:GetClass() != "ent_hg_hmcd_radio" or (ent:GetPos():Distance(ply:EyePos()) > 75) then return end
+
+	net.Start("RadioStop")
+		net.WriteInt(ent:EntIndex(),32)
+	net.Broadcast()
+end)
