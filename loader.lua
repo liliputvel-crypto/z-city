@@ -1,104 +1,81 @@
-hg = hg or {}
-hg.Version = "Release 1.4.1"
-hg.GitHub_ReposOwner = "uzelezz123"
-hg.GitHub_ReposName = "Z-City" -- please add your real git fork!
+--[[-------------------------------------------------------------------
+	wiltOS Dynamic Animation Base:
+			Powered by
+						  _ _ _    ___  ____  
+				__      _(_) | |_ / _ \/ ___| 
+				\ \ /\ / / | | __| | | \___ \ 
+				 \ V  V /| | | |_| |_| |___) |
+				  \_/\_/ |_|_|\__|\___/|____/ 
+											  
+ _____         _                 _             _           
+|_   _|__  ___| |__  _ __   ___ | | ___   __ _(_) ___  ___ 
+  | |/ _ \/ __| '_ \| '_ \ / _ \| |/ _ \ / _` | |/ _ \/ __|
+  | |  __/ (__| | | | | | | (_) | | (_) | (_| | |  __/\__ \
+  |_|\___|\___|_| |_|_| |_|\___/|_|\___/ \__, |_|\___||___/
+                                         |___/             
+-------------------------------------------------------------------]]--[[
+							  
+	Lua Developer: King David
+	Contact: http://steamcommunity.com/groups/wiltostech
+		
+----------------------------------------]]--
 
-if SERVER then
-	resource.AddWorkshop("3657285193") -- main addon
-	resource.AddWorkshop("3657897364") -- main content addon
-	resource.AddWorkshop("3657294321") -- first content addon
-	resource.AddWorkshop("3544105055") -- second content addon
-	resource.AddWorkshop("3257937532") -- distac content
-end
--- if hg.GitHub_ReposOwner and hg.GitHub_ReposOwner != "" then
--- 	http.Fetch( "https://api.github.com/repos/" .. hg.GitHub_ReposOwner .. "/" .. hg.GitHub_ReposName .. "/commits?sha=" .. hg.GitHub_Branch .. "&per_page=1",
--- 		function( body, length, headers, code )
--- 			--PrintTable(headers)
--- 			local tbl = util.JSONToTable(body)
--- 			hg.Git_LastCommitTime = tbl[1]["committer"]["date"]
+wOS = wOS or {}
+wOS.DynaBase = wOS.DynaBase or {}
 
--- 		end
--- 	)
--- else
--- 	hg.GitHub_ReposOwner = "Unknown"
--- 	hg.GitHub_ReposName = "Please add your github fork"
--- 	hg.Git_CommitNumber = "Unknown"
--- end
-local sides = {
-	["sv_"] = "sv_",
-	["sh_"] = "sh_",
-	["cl_"] = "cl_",
-	["_sv"] = "sv_",
-	["_sh"] = "sh_",
-	["_cl"] = "cl_",
-}
+local string = string
+local file = file
 
-local function AddFile(File, dir)
-	local fileSide = string.lower(string.Left(File, 3))
-	local fileSide2 = string.lower(string.Right(string.sub(File, 1, -5), 3))
-	local side = sides[fileSide] or sides[fileSide2]
-	if SERVER and side == "sv_" then
-		include(dir .. File)
-	elseif side == "sh_" then
-		if SERVER then AddCSLuaFile(dir .. File) end
-		include(dir .. File)
-	elseif side == "cl_" then
-		if SERVER then
-			AddCSLuaFile(dir .. File)
-		else
-			include(dir .. File)
-		end
-	else
-		if SERVER then AddCSLuaFile(dir .. File) end
-		include(dir .. File)
+local function _AddCSLuaFile( lua )
+
+	if SERVER then
+		AddCSLuaFile( lua )
 	end
+	
 end
 
-local function IncludeDir(dir)
-	dir = dir .. "/"
-	local files, directories = file.Find(dir .. "*", "LUA")
-	if files then
-		for k, v in ipairs(files) do
-			if string.EndsWith(v, ".lua") then AddFile(v, dir) end
-		end
-	end
+local function _include( load_type, lua )
 
-	if directories then
-		for k, v in ipairs(directories) do
-			IncludeDir(dir .. v)
-		end
+	if load_type then
+		include( lua )
 	end
+	
 end
 
-local function Run()
-	local time = SysTime()
-	print("Loading zcity...") -- Loading homigrad :]
-	hg.loaded = false
-	if engine.ActiveGamemode() == "ixhl2rp" then return end
-	IncludeDir("homigrad")
-	hg.loaded = true
-	print("Loaded zcity, " .. tostring(math.Round(SysTime() - time, 5)) .. " seconds needed")
-	hook.Run("HomigradRun")
+function wOS.DynaBase:Autoloader()
+
+	_AddCSLuaFile( "wos/dynabase/core/sh_core.lua" )
+	_include( SERVER, "wos/dynabase/core/sh_core.lua" )
+	_include( CLIENT, "wos/dynabase/core/sh_core.lua" )
+
+	_AddCSLuaFile( "wos/dynabase/core/sh_model_operations.lua" )
+	_include( SERVER, "wos/dynabase/core/sh_model_operations.lua" )
+	_include( CLIENT, "wos/dynabase/core/sh_model_operations.lua" )
+	
+	_AddCSLuaFile( "wos/dynabase/core/sh_mounting.lua" )
+	_include( SERVER, "wos/dynabase/core/sh_mounting.lua" )
+	_include( CLIENT, "wos/dynabase/core/sh_mounting.lua" )
+
+	_AddCSLuaFile( "wos/dynabase/core/cl_net.lua" )
+	_include( CLIENT, "wos/dynabase/core/cl_net.lua" )
+
+	_AddCSLuaFile( "wos/dynabase/core/cl_core.lua" )
+	_include( CLIENT, "wos/dynabase/core/cl_core.lua" )
+	_include( SERVER, "wos/dynabase/core/sv_core.lua" )
+
+	_AddCSLuaFile( "wos/dynabase/core/cl_local_copy.lua" )
+	_include( CLIENT, "wos/dynabase/core/cl_local_copy.lua" )
+
+	_AddCSLuaFile( "wos/dynabase/core/cl_config_menu.lua" )
+	_include( CLIENT, "wos/dynabase/core/cl_config_menu.lua" )
+
+	for _,source in pairs( file.Find( "wos/dynabase/registers/*", "LUA"), true ) do
+		local lua = "wos/dynabase/registers/" .. source
+		_AddCSLuaFile( lua )
+		_include( SERVER, lua )
+		_include( CLIENT, lua )
+	end
+	
 end
 
-local initpost
-hook.Add("InitPostEntity", "zcity", function()
-	initpost = true
-	IncludeDir("initpost")
-	print("Loading initpost...")
-end)
-if initpost then Run() end
-Run()
-
-timer.Simple(5, function()
-	if not istable(ulx) then
-		for i = 1, 6 do
-			MsgC(Color(255, 0, 0), "WARNING: Server doesn't have ULX & ULib installed! Z-City will not work properly without it!\n")
-		end
-	end
-	if game.SinglePlayer() then
-		for i = 1, 3 do
-			MsgC(Color(255, 0, 0), "WARNING: Game started in singleplayer! Z-City may not work properly until you start multiplayer game!\n")
-		end
-	end
-end)
+wOS.DynaBase:Autoloader()
