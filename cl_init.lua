@@ -2,125 +2,230 @@ include( "shared.lua" )
 
 DEFINE_BASECLASS( "base_glide_aircraft" )
 
-function ENT:OnOutOfControlChange( _, _, value )
-    if value then
-        local path = ( "glide/helicopters/spinout_%d.wav" ):format( math.random( 1, 6 ) )
-        local snd = self:CreateLoopingSound( "outOfControl", path, 100 )
-        snd:PlayEx( 1, 100 )
-
-    elseif self.sounds.outOfControl then
-        self.sounds.outOfControl:Stop()
-        self.sounds.outOfControl = nil
-    end
-end
-
---- Implement this base class function.
+--- Implement the base class `OnTurnOn` function.
 function ENT:OnTurnOn()
-    if self:GetPower() < 0.1 then
+    if self:GetPower() < 0.01 then
         self:EmitSound( self.StartSound, 80, 100, 0.6 )
     end
 end
 
 --- Implement this base class function.
-function ENT:OnActivateSounds()
-    -- Create a client-side entity to play the tail rotor sound
-    if self.TailSoundPath ~= "" then
-        self.entTailRotor = ClientsideModel( "models/hunter/plates/plate.mdl" )
-        self.entTailRotor:SetPos( self:LocalToWorld( self.TailRotorOffset ) )
-        self.entTailRotor:Spawn()
-        self.entTailRotor:SetParent( self )
-        self.entTailRotor:SetNoDraw( true )
+function ENT:AllowWindSound()
+    return true, 0.8 - self:GetPower()
+end
 
-        self:CreateLoopingSound( "tail", self.TailSoundPath, self.TailSoundLevel, self.entTailRotor )
+--- Implement this base class function.
+function ENT:OnActivateSounds()
+    self:CreateLoopingSound( "engine", self.EngineSoundPath, self.EngineSoundLevel )
+    self:CreateLoopingSound( "exhaust", self.ExhaustSoundPath, self.ExhaustSoundLevel )
+    self:CreateLoopingSound( "distant", self.DistantSoundPath, self.DistantSoundLevel )
+
+    if self.ThrustSound ~= "" then
+        self:CreateLoopingSound( "thrust", self.ThrustSound, self.ThrustSoundLevel )
     end
 
-    -- Create engine loop sounds
-    self:CreateLoopingSound( "distant", self.DistantSoundPath, 90 )
-    self:CreateLoopingSound( "engine", self.EngineSoundPath, self.EngineSoundLevel )
-    self:CreateLoopingSound( "jet", self.JetSoundPath, self.JetSoundLevel )
+    if self.PropSoundPath == "" then return end
 
-    -- Setup variables for the beat sounds
-    self.nextBeat = 0
-    self.beatDiff = 0
+    -- Create a client-side entity to play the propeller sound
+    self.entProp = ClientsideModel( "models/hunter/plates/plate.mdl" )
+    self.entProp:SetPos( self:LocalToWorld( self.PropOffset ) )
+    self.entProp:Spawn()
+    self.entProp:SetParent( self )
+    self.entProp:SetNoDraw( true )
+
+    self:CreateLoopingSound( "prop", self.PropSoundPath, self.PropSoundLevel, self.entProp )
 end
 
 --- Implement this base class function.
 function ENT:OnDeactivateSounds()
-    if IsValid( self.entTailRotor ) then
-        self.entTailRotor:Remove()
-        self.entTailRotor = nil
+    if IsValid( self.entProp ) then
+        self.entProp:Remove()
+        self.entProp = nil
     end
 end
 
+--- Implement this base class function.
+function ENT:OnActivateMisc()
+    self.controlSoundCD = 0
+    self.nextControlTime = 0
+    self.lastControlInput = {}
+end
+
 local Abs = math.abs
-local Clamp = math.Clamp
+
+function ENT:UpdateControlSurfaceSound( nwFunc, t )
+    local controlInput = Abs( self[nwFunc]( self ) ) > 0.5
+
+    if self.lastControlInput[nwFunc] ~= controlInput then
+        self.lastControlInput[nwFunc] = controlInput
+
+        if t > self.controlSoundCD then
+            self.controlSoundCD = t + 0.5
+            Glide.PlaySoundSet( "Glide.Plane.ControlSurface", self, 0.5 )
+        end
+    end
+end
+
 local RealTime = RealTime
 
+--- Override this base class function.
+function ENT:OnUpdateMisc()
+    BaseClass.OnUpdateMisc( self )
+
+    self:OnUpdateAnimations()
+
+    local t = RealTime()
+
+    if t > self.nextControlTime then
+        self.nextControlTime = t + 0.1
+        self:UpdateControlSurfaceSound( "GetElevator", t )
+        self:UpdateControlSurfaceSound( "GetRudder", t )
+        self:UpdateControlSurfaceSound( "GetAileron", t )
+    end
+end
+
+local Clamp = math.Clamp
+local Remap = math.Remap
 local GetVolume = Glide.Config.GetVolume
-local PlaySoundSet = Glide.PlaySoundSet
 
 --- Implement this base class function.
 function ENT:OnUpdateSounds()
+    if self.isLazyThink then return end
+
     local sounds = self.sounds
     local vol = GetVolume( "aircraftVolume" )
 
-    for id, snd in pairs( sounds ) do
-        if not snd:IsPlaying() and id ~= "outOfControl" then
+    for _, snd in pairs( sounds ) do
+        if not snd:IsPlaying() then
             snd:PlayEx( 0, 1 )
         end
     end
 
     local power = self:GetPower()
+    local power01 = Clamp( power, 0, 1 )
+    local pitch = self:GetExtraPitch()
 
-    if not self.isLazyThink then
-        sounds.distant:ChangePitch( Clamp( power, 0, 1 ) * 100 )
-        sounds.distant:ChangeVolume( Clamp( power - 0.2, 0, 0.8 ) * 0.5 * vol )
-
-        sounds.engine:ChangePitch( Clamp( 0.6 + power * 0.4, 0, 1 ) * 100 )
-        sounds.engine:ChangeVolume( ( Clamp( power - 0.2, 0, 1 ) * ( 1.3 - power ) ) * self.EngineSoundVolume * vol )
-
-        sounds.jet:ChangePitch( Clamp( 0.6 + power * 0.4, 0, 1 ) * 100 )
-        sounds.jet:ChangeVolume( Clamp( power - 0.2, 0, 1 ) * self.JetSoundVolume * vol )
-
-        if sounds.tail then
-            sounds.tail:ChangePitch( Clamp( 0.5 + power * 0.5, 0, 1 ) * 100 )
-            sounds.tail:ChangeVolume( Clamp( power - 0.1, 0, 1 ) * 0.6 * vol )
-        end
+    if sounds.prop then
+        sounds.prop:ChangePitch( Remap( power, 1, 2, self.PropSoundMinPitch, self.PropSoundMaxPitch ) )
+        sounds.prop:ChangeVolume( power01 * self.PropSoundVolume * vol )
     end
 
-    local isEngineDying = self:GetIsEngineDying() and LocalPlayer():GlideGetVehicle() == self
+    if sounds.thrust then
+        local thrustVol = Remap( Clamp( self:GetThrottle(), 0, 1 ), 0, 1, self.ThrustSoundLowVolume, self.ThrustSoundHighVolume )
 
-    if isEngineDying then
-        if not sounds.engineWarning and self.EngineFailSound ~= "" then
-            local snd = self:CreateLoopingSound( "engineWarning", self.EngineFailSound, 130, self )
-            snd:PlayEx( self.EngineFailVolume, 130 )
-        end
-
-    elseif sounds.engineWarning then
-        sounds.engineWarning:Stop()
-        sounds.engineWarning = nil
+        sounds.thrust:ChangePitch( Remap( power, 0, 2, self.ThrustSoundMinPitch, self.ThrustSoundMaxPitch ) )
+        sounds.thrust:ChangeVolume( power01 * thrustVol * vol )
     end
 
-    local t = RealTime()
-    if t < self.nextBeat then return end
+    sounds.engine:ChangePitch( Remap( power, 1, 2, self.EngineSoundMinPitch, self.EngineSoundMaxPitch ) * power01 * pitch )
+    sounds.engine:ChangeVolume( power01 * self.EngineSoundVolume * vol )
 
-    local delay = self.RotorBeatInterval + Clamp( 0.6 - power, 0, 1 ) * 0.1
+    sounds.exhaust:ChangePitch( Remap( power, 1, 2, self.ExhaustSoundMinPitch, self.ExhaustSoundMaxPitch ) * power01 * pitch )
+    sounds.exhaust:ChangeVolume( power01 * self.ExhaustSoundVolume * vol )
 
-    -- Calculate the time difference between the time we expected to play
-    -- the beat and the time when it actually played, to compensate next frame.
-    self.beatDiff = Clamp( t - self.nextBeat, -0.05, 0.05 )
-    self.nextBeat = t + delay - self.beatDiff
+    vol = vol * Clamp( self.rfSounds.lastDistance / 1000000, 0, 1 )
 
-    -- Change beat pitch/volume depending on power and angles
-    local ang = self:GetAngles()
-    local angMult = Clamp( ( Abs( ang[1] * 0.8 ) + Abs( ang[3] ) ) / 50, 0, 1 )
+    sounds.distant:ChangePitch( Remap( power, 1, 2, 80, 100 ) )
+    sounds.distant:ChangeVolume( vol * power01 )
 
-    local beatVolume = ( Clamp( power, 0, 1 ) - 0.1 ) * vol
-    local beatPitch = 70 + ( 30 * power ) - ( angMult * 20 )
-    local midVolume = ( self.MidSoundVol * 0.8 ) + self.MidSoundVol * angMult
-    local highVolume = self.HighSoundVol - self.HighSoundVol * angMult * 0.4
+    -- Handle damaged engine sound
+    local health = self:GetEngineHealth()
 
-    PlaySoundSet( self.BassSoundSet, self, beatVolume * self.BassSoundVol, beatPitch )
-    PlaySoundSet( self.MidSoundSet, self, midVolume * beatVolume, beatPitch )
-    PlaySoundSet( self.HighSoundSet, self, highVolume * beatVolume, beatPitch )
+    if health < 0.5 then
+        if sounds.rattle then
+            sounds.rattle:ChangeVolume( Clamp( power01 * ( 1 - health ), 0, 1 ) * 0.8 )
+        else
+            local snd = self:CreateLoopingSound( "rattle", self.EngineRattleSound, 85, self )
+            snd:PlayEx( 0.1, 100 )
+        end
+
+    elseif sounds.rattle then
+        sounds.rattle:Stop()
+        sounds.rattle = nil
+    end
+end
+
+DEFINE_BASECLASS( "base_glide_aircraft" )
+
+local Floor = math.floor
+local ExpDecay = Glide.ExpDecay
+local SimpleText = draw.SimpleText
+
+local Config = Glide.Config
+local DrawIcon = Glide.DrawIcon
+local DrawFilledCircle = Glide.DrawFilledCircle
+local DrawOutlinedCircle = Glide.DrawOutlinedCircle
+
+local colors = {
+    bg = Color( 30, 30, 30, 220 ),
+    bar = Glide.THEME_COLOR,
+    icon = Color( 255, 255, 255, 255 ),
+    iconDisabled = Color( 60, 60, 60, 255 ),
+    speedBars = Color( 220, 220, 220, 255 )
+}
+
+local size, x, y
+local power = 0
+
+--- Override this base class function.
+function ENT:DrawVehicleHUD( screenW, screenH )
+    local playerListWidth = BaseClass.DrawVehicleHUD( self, screenW, screenH )
+
+    if not Config.showHUD then return end
+
+    size = Floor( screenH * 0.15 )
+
+    x = screenW - size - playerListWidth - Floor( screenH * 0.01 )
+    y = screenH - size - Floor( screenH * 0.03 )
+
+    local r = size * 0.5
+    local dt = FrameTime()
+
+    -- Throttle
+    power = ExpDecay( power, self:GetPower(), 20, dt )
+    colors.bar.a = 255
+
+    DrawOutlinedCircle( r, x + r, y + r, size * 0.08, colors.bg )
+    DrawOutlinedCircle( r * 0.97, x + r, y + r, size * 0.05, colors.bar, 180 * power, 360 )
+
+    -- Speed
+    local speedR = r * 0.8
+
+    DrawFilledCircle( speedR, x + r, y + r, colors.bg )
+    DrawOutlinedCircle( speedR, x + r, y + r, size * 0.02, colors.speedBars )
+
+    local speed = self:GetVelocity():Length()
+
+    -- Convert Source units to MPH
+    speed = speed * 0.0568182
+
+    if Config.useKMH then
+        speed = speed * 1.60934 -- Convert MPH to km/h
+    end
+
+    local unit = Config.useKMH and " km/h" or " mph"
+
+    SimpleText( Floor( speed ) .. unit, "GlideHUD", x + size * 0.5, y + size * 0.48, colors.icon, 1, 4 )
+
+    -- Engine state
+    DrawIcon( x + size * 0.5, y + size * 0.65, "glide/icons/engine.png", size * 0.2, self:IsEngineOn() and colors.icon or colors.iconDisabled )
+
+    -- Wing stall warning
+    if self:GetIsStalling() then
+        surface.SetFont( "GlideHUD" )
+
+        local text = Glide.GetLanguageText( "hud.stall" )
+        w, h = surface.GetTextSize( text )
+
+        w = w + screenW * 0.01
+        h = h + screenW * 0.01
+
+        x = x + ( size * 0.5 ) - ( w * 0.5 )
+        y = y - h - size * 0.1
+
+        surface.SetDrawColor( 255, 100, 100, 200 )
+        surface.DrawRect( x, y, w, h )
+
+        SimpleText( text, "GlideHUD", x + w * 0.5, y + h * 0.5, colors.icon, 1, 1 )
+    end
 end
