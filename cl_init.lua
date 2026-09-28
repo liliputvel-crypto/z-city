@@ -1,29 +1,42 @@
 include("shared.lua")
-ENT.Model = "models/weapons/c_models/c_grappling_hook/c_grappling_hook.mdl"
 
-local clr = Color(10, 10, 10, 255)
+local redglow, trans = Material("sprites/redglow1"), Material("models/hands/hands_color")
+
+function ENT:Initialize()
+	self.NextTime = 3
+	self.material = trans
+	self.Amount = 0
+
+	timer.Simple(3, function()
+		self.Allowed = true
+	end)
+end
+
+local white = Color(255,255,255,255)
 function ENT:Draw()
-	if not self.RModel or not IsValid(self.RModel) then
-		self.RModel = ClientsideModel(self.Model)
-		self.RModel:SetNoDraw(true)
-		self.RModel:SetMaterial("models/shiny")
-		self.RModel:SetColor(clr)
-		self.RModel:SetParent(self)
-		self:CallOnRemove("Remove_CLMDL", function() self.RModel:Remove() end)
-	end
+	local Mat = Matrix()
+	Mat:Scale(Vector(.42, .42, .42))
+	self:EnableMatrix("RenderMultiply", Mat)
+	self:DrawModel()
+	if not self.Allowed then return end
+	local pos, ang = self:GetPos(), self:GetAngles()
 
-	--print(self.RModel)
-	local Vel, Ang = self:GetVelocity(), self:GetAngles()
-	if Vel:Length() > 100 then
-		Ang = Vel:Angle()
-		if self:GetNWBool("Impacted") then
-			Ang:RotateAroundAxis(Ang:Right(), 90)
-		else
-			Ang:RotateAroundAxis(Ang:Right(), -90)
+	if self.NextBeep < CurTime() then
+		self.material = redglow
+		self.Amount = self.Amount + 1
+		self.NextBeep = CurTime() + self.NextTime
+
+		if self.Amount >= 3 then
+			self.NextTime = 0.2
 		end
+
+		timer.Simple(.1, function()
+			self.material = trans
+		end)
 	end
 
-	self.RModel:SetRenderAngles(Ang)
-	self.RModel:SetRenderOrigin(self:GetPos())
-	self.RModel:DrawModel()
+	cam.Start3D()
+	render.SetMaterial(self.material)
+	render.DrawSprite(pos + ang:Up() * 5.3 + ang:Right() * 0, 10, 10, white)
+	cam.End3D()
 end

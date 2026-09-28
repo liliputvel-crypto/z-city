@@ -1,5 +1,5 @@
 ENT.Type = "anim"
-ENT.PrintName = "Grappling Hook"
-ENT.Author = "metal factory"
-ENT.Category = "ZCity Other"
+ENT.Base = "base_anim"
+ENT.PrintName = "ent_hg_breachcharge"
 ENT.Spawnable = false
+ENT.NextBeep = 0
