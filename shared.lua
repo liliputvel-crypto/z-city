@@ -1,6 +1,9 @@
 ENT.Type = "anim"
 ENT.Base = "base_gmodentity"
-ENT.PrintName = "Cyanide canister"
-ENT.Spawnable = false
-ENT.totalparticles = 30
-ENT.Model = "models/jordfood/jtun.mdl"
+ENT.PrintName = "Chlorine Canister"
+ENT.Category = "ZCity Other"
+ENT.Spawnable = true
+ENT.AdminOnly = true
+ENT.totalparticles = 60
+ENT.Model = "models/props_junk/propanecanister001as.mdl"
+ENT.IconOverride = "vgui/wep_jack_hmcd_chlorine"
