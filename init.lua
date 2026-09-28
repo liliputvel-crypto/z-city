@@ -1,387 +1,217 @@
-AddCSLuaFile( "cl_init.lua" )
-AddCSLuaFile( "shared.lua" )
-
-include( "shared.lua" )
-
-DEFINE_BASECLASS( "base_glide_car" )
-
-local EntityMeta = FindMetaTable( "Entity" )
-local GetTable = EntityMeta.GetTable
-
---- Implement this base class function.
-function ENT:OnPostInitialize()
-    BaseClass.OnPostInitialize( self )
-
-    -- Create a weapon. We'll implement a
-    -- custom fire logic on our `ENT:OnWeaponFire`.
-    self:CreateWeapon( "base", {
-        MaxAmmo = 0,
-        FireDelay = 2.0
-    } )
-
-    -- Setup variables used on all tanks
-    self.isTurningInPlace = false
-    self.isCannonInsideWall = false
-
-    self:SetTrackSpeed( 0 )
-    self:SetTurretAngle( Angle() )
-    self:SetIsAimingAtTarget( false )
-
-    -- Override default NW engine params from the base class
-    self.engineBrakeTorque = 40000
-    self:SetMinRPMTorque( 40000 )
-    self:SetMaxRPMTorque( 35000 )
-    self:SetDifferentialRatio( 0.75 )
-    self:SetTransmissionEfficiency( 1.0 )
-    self:SetPowerDistribution( 0.0 )
-
-    -- Steering parameters
-    self:SetMaxSteerAngle( 30 )
-    self:SetSteerConeChangeRate( 8 )
-    self:SetSteerConeMaxSpeed( 500 )
-    self:SetSteerConeMaxAngle( 0.25 )
-    self:SetCounterSteer( 0.75 )
-
-    -- Override default NW wheel params from the base class
-    local params = {
-        -- Suspension
-        suspensionLength = 15,
-        springStrength = 6000,
-        springDamper = 30000,
-
-        -- Brake force
-        brakePower = 15000,
-
-        -- Forward traction
-        forwardTractionMax = 50000,
-
-        -- Side traction
-        sideTractionMultiplier = 800,
-        sideTractionMaxAng = 25,
-        sideTractionMax = 12000,
-        sideTractionMin = 10000
-    }
-
-    -- Maximum length of the suspension
-    self:SetSuspensionLength( params.suspensionLength )
-
-    -- How strong is the suspension spring
-    self:SetSpringStrength( params.springStrength )
-
-    -- Damping coefficient for when the suspension is compressed/expanded
-    self:SetSpringDamper( params.springDamper )
-
-    -- Brake coefficient
-    self:SetBrakePower( params.brakePower )
-
-    -- Traction parameters
-    self:SetForwardTractionMax( params.forwardTractionMax )
-    self:SetForwardTractionBias( 0.0 )
-
-    self:SetSideTractionMultiplier( params.sideTractionMultiplier )
-    self:SetSideTractionMaxAng( params.sideTractionMaxAng )
-    self:SetSideTractionMax( params.sideTractionMax )
-    self:SetSideTractionMin( params.sideTractionMin )
+AddCSLuaFile("cl_init.lua")
+AddCSLuaFile("shared.lua")
+include("shared.lua")
+function ENT:Initialize()
+	self:SetModel(self.Model)
+	self:SetModelScale(0.5)
+	self:Activate()
+	self:PhysicsInit(SOLID_VPHYSICS)
+	self:SetMoveType(MOVETYPE_VPHYSICS)
+	self:SetSolid(SOLID_VPHYSICS)
+	self:SetCollisionGroup(COLLISION_GROUP_WEAPON)
+	self:SetUseType(SIMPLE_USE)
+	self:DrawShadow(false)
+	self.isbomb = true
+	local phys = self:GetPhysicsObject()
+	if IsValid(phys) then
+		phys:SetMass(10)
+		phys:Wake()
+		phys:EnableMotion(true)
+	end
 end
 
---- Override this base class function.
-function ENT:TurnOff()
-    BaseClass.TurnOff( self )
-
-    self.isTurningInPlace = false
+function ENT:OnRemove()
 end
 
---- Override this base class function.
-function ENT:OnTakeDamage( dmginfo )
-    if dmginfo:IsDamageType( 64 ) then -- DMG_BLAST
-        local inflictor = dmginfo:GetInflictor()
+util.AddNetworkString("bomb_look")
+util.AddNetworkString("bomb_enter")
 
-        -- Increase damage taken by Half-life 2 RPGs
-        if IsValid( inflictor ) and inflictor:GetClass() == "rpg_missile" then
-            dmginfo:SetDamage( dmginfo:GetDamage() * 2.5 )
-        end
-    end
+function BombInSite(pos, site)
+	local pts = zb.GetMapPoints( "BOMB_ZONE_"..(site == 1 and "A" or "B") )
 
-    BaseClass.OnTakeDamage( self, dmginfo )
+	local vec1
+	local vec2
+
+	if #pts >= 2 then
+		vec1 = -(-pts[1].pos)
+		vec1[3] = vec1[3] - 256
+		vec2 = -(-pts[2].pos)
+		vec2[3] = vec2[3] + 256
+	end
+
+	return (#pts >= 2 and pos:WithinAABox(vec1, vec2))
 end
 
-function ENT:GetTurretOrigin()
-    return self:LocalToWorld( self.TurretOffset )
+net.Receive("bomb_enter",function(len, ply)
+	if !ply:Alive() then return end
+	
+	local org = ply.organism
+
+	if !org.canmove then return end
+
+	local txt = net.ReadString()
+	local num = tonumber(txt)
+	
+	--ply:ChatPrint(txt)
+	local ent = ply.bomb
+	
+	if ent.isbomb then
+		if not ent.active then
+			local isSandbox = engine.ActiveGamemode() == "sandbox"
+			if isSandbox or BombInSite(ent:GetPos(), 1) or BombInSite(ent:GetPos(), 2) then
+				ent.code = txt
+				ply:ChatPrint("The bomb's code is: "..ent.code)
+				ent:ActivateBomb()
+			else
+				ply:ChatPrint("The bomb must be planted on site")
+			end
+		else
+			if ent.code == txt then
+				ent:DisableBomb()
+				ent:SetNetVar("knowncode", "******")
+				ply:ChatPrint("The bomb has been disarmed.")
+			else
+				local bombtxt = ent.code
+				local knownnumbers = ent:GetNetVar("knowncode","******")
+				local newknownnumbers = ""
+
+				for i = 1,#bombtxt do
+					if (bombtxt[i] == txt[i]) then
+						newknownnumbers = newknownnumbers..(txt[i])
+					else
+						newknownnumbers = newknownnumbers..(knownnumbers[i] == bombtxt[i] and knownnumbers[i] or "*")
+					end
+				end
+
+				ent:SetNetVar("knowncode", newknownnumbers)
+				ply:ChatPrint(newknownnumbers)
+			end
+		end
+	end
+end)
+
+function ENT:DisableBomb()
+	local activetime = self.ExplodeTime - (self:GetNetVar("timer") - CurTime())
+	self:SetNetVar("timer", nil)
+	self.addtime = activetime
+	self.active = nil
+
+	local phys = self:GetPhysicsObject()
+	if IsValid(phys) then
+		phys:EnableMotion(true)
+	end
 end
 
-function ENT:GetTurretAimDirection()
-    local origin = self:GetTurretOrigin()
-    local ang = self:LocalToWorldAngles( self:GetTurretAngle() )
+local offsetPos = Vector(0,0,0)
+local offsetAng = Angle(-90,0,180)
+function ENT:ActivateBomb()
+	self:SetNetVar("timer", CurTime() + self.ExplodeTime - (self.addtime or 0))
+	self.active = true
 
-    -- Use the driver's aim position directly when
-    -- the turret is aiming close enough to it.
-    local driver = self:GetDriver()
+	if self.tbl and not self.activatedonce then
+		local siteName
+		if BombInSite(self:GetPos(), 1) then
+			siteName = "A"
+		elseif BombInSite(self:GetPos(), 2) then
+			siteName = "B"
+		end
+		PrintMessage(HUD_PRINTTALK, "Bomb has been planted"
+			..(siteName and (" on site "..siteName) or "")
+			..".")
+		
+		hg.UpdateRoundTime(zb.ROUND_TIME + self.ExplodeTime + 1)
+	end
 
-    if IsValid( driver ) and self:GetIsAimingAtTarget() then
-        local dir = driver:GlideGetAimPos() - origin
-        dir:Normalize()
-        ang = dir:Angle()
-    end
+	self.activatedonce = true
 
-    return ang:Forward()
+	local phys = self:GetPhysicsObject()
+	if IsValid(phys) then
+		phys:EnableMotion(false)
+	end
+
+	local tr = {}
+	tr.start = self:GetPos()
+	tr.endpos = tr.start - vector_up * 1000
+	tr.filter = self
+	tr.mask = MASK_SOLID
+	tr.mins = self:OBBMins()
+	tr.maxs = self:OBBMaxs()
+	
+	local trace = util.TraceHull(tr)
+	
+	local pos, ang = LocalToWorld(offsetPos,offsetAng,trace.HitPos,trace.HitNormal:Angle())
+
+	self:SetPos(pos)
+	self:SetAngles(ang)
 end
 
-local TraceLine = util.TraceLine
+function ENT:Use(activator)
+	local isSandbox = engine.ActiveGamemode() == "sandbox"
+	--if self:IsPlayerHolding() then return end
+	if not isSandbox then
+		if not BombInSite(self:GetPos(), 1) and not BombInSite(self:GetPos(), 2) then activator:PickupObject(self) return end
+	end
+	if self.active then
+		if activator:Team() == 0 then
+			activator:ChatPrint("The bomb's code is: "..self.code)
+			return
+		end
+	end
+	
+	activator:PickupObject(self)
+	self.user = activator
+	activator.bomb = self
 
-function ENT:GetTurretAimPosition()
-    local origin = self:GetTurretOrigin()
-    local target = origin + self:GetTurretAimDirection() * 50000
-    local tr = TraceLine( self:GetTraceData( origin, target ) )
-
-    if tr.Hit then
-        target = tr.HitPos
-    end
-
-    return target
+	net.Start("bomb_look")
+	net.WriteEntity(self)
+	net.Send(activator)
 end
 
---- Implement this base class function.
-function ENT:OnWeaponFire( weapon, slotIndex )
-    -- If this vehicle has more than one weapon,
-    -- let the VSWEP class handle the logic.
-    if slotIndex > 1 then
-        return true
-    end
+ENT.nextbeep = 0
 
-    if self:WaterLevel() > 2 then
-        return false
-    end
+function ENT:Think()
+	self:NextThink(CurTime())
+	if self.active then
+		if self:GetNetVar("timer") < CurTime() then
+			zb.bombexploded = true
+			util.ScreenShake( selfPos, 95, 500, 4, 1000 )
+			hg.PropExplosion(self, "Fire", 300, 100)
+		end
 
-    if self.isCannonInsideWall then
-        weapon.nextFire = 0
-        return false
-    end
+		--;; WHAT THE FAK YUUUUUUAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAH
+		local timeLeft = self:GetNetVar("timer") - CurTime()
+		if timeLeft <= 1.5 and timeLeft > 0 and not self.wtfPlayed and math.random(1, 100) <= 5 then
+			self.wtfPlayed = true
+			self:EmitSound("snds_jack_gmod/wtfboom.mp3")
+		end
 
-    local aimPos = self:GetTurretAimPosition()
-    local projectilePos = self:GetProjectileStartPos()
+		if self.nextbeep < CurTime() and self:GetNetVar("timer") > CurTime() then
+			local beep = math.max((self:GetNetVar("timer") - CurTime()) / self.ExplodeTime,0.05)	
+			self.nextbeep = CurTime() + beep
+			for i, ent in ipairs(ents.FindInSphere(self:GetPos(),32 / beep)) do
+				if ent.organism then
+					ent.organism.adrenalineAdd = ent.organism.adrenalineAdd + 0.02 / beep
+					ent.organism.fear = math.min(ent.organism.fear + 0.02 / beep, 1)
+				end
+			end
+			self:EmitSound("snd_jack_chargecapacitor.wav")
+		end
 
-    -- Make the projectile point towards the direction the
-    -- turret is aiming at, no matter where it spawned.
-    local dir = aimPos - projectilePos
-    dir:Normalize()
+		return true
+	end
+	
+	
+	if not self.active and self.wtfPlayed then
+		self.wtfPlayed = nil
+	end
 
-    local projectile = Glide.FireProjectile( projectilePos, dir:Angle(), self:GetDriver(), self )
-    projectile.damage = self.TurretDamage
-    projectile:SetMaterial( "phoenix_storms/concrete0" )
+	if self.user and not self:IsPlayerHolding() then
+		net.Start("bomb_look")
+		net.WriteEntity(NULL)
+		net.Send(self.user)
+		self.user.bomb = nil
+		self.user = nil
+	end
 
-    self:EmitSound( self.TurretFireSound, 100, math.random( 95, 105 ), self.TurretFireVolume )
-
-    local eff = EffectData()
-    eff:SetOrigin( projectilePos )
-    eff:SetNormal( dir )
-    eff:SetScale( 1 )
-    util.Effect( "glide_tank_cannon", eff )
-
-    local phys = self:GetPhysicsObject()
-
-    if IsValid( phys ) then
-        phys:ApplyForceOffset( dir * phys:GetMass() * -self.TurretRecoilForce, projectilePos )
-    end
-
-    local driver = self:GetDriver()
-
-    if IsValid( driver ) then
-        Glide.SendViewPunch( driver, -0.2 )
-    end
-
-    return false
-end
-
-local EntityPairs = Glide.EntityPairs
-
---- Override this base class function.
-function ENT:UpdatePowerDistribution()
-    -- Let the base class do front/rear power distribution
-    BaseClass.UpdatePowerDistribution( self )
-
-    -- Let's also do a left/right power distribution
-    local rCount, lCount = 0, 0
-
-    -- First, count how many wheels are in the left/right
-    for _, w in EntityPairs( self.wheels ) do
-        w.isOnRightSide = w.params.basePos[2] > 0
-
-        if w.isOnRightSide then
-            rCount = rCount + 1
-        else
-            lCount = lCount + 1
-        end
-    end
-
-    -- Then, use that count to split the torque between left/right side wheels
-    local lDistribution = 0.5 + self:GetPowerDistribution() * 0.5
-    local rDistribution = 1 - lDistribution
-
-    rDistribution = rDistribution / rCount
-    lDistribution = lDistribution / lCount
-
-    for _, w in EntityPairs( self.wheels ) do
-        w.sideDistributionFactor = w.isOnRightSide and rDistribution or lDistribution
-    end
-end
-
-local Abs = math.abs
-
---- Override this base class function.
-function ENT:OnPostThink( dt, selfTbl )
-    BaseClass.OnPostThink( self, dt, selfTbl )
-
-    -- Update turret angles, if we have a driver
-    local driver = self:GetDriver()
-
-    if IsValid( driver ) and self:WaterLevel() < 2 then
-        local newAng, isAimingAtTarget = self:UpdateTurret( driver, dt, self:GetTurretAngle() )
-
-        -- Don't let it shoot while inside walls
-        local origin = self:GetTurretOrigin()
-        local projectilePos = self:GetProjectileStartPos()
-        local tr = TraceLine( self:GetTraceData( origin, projectilePos ) )
-
-        selfTbl.isCannonInsideWall = tr.Hit
-
-        if selfTbl.isCannonInsideWall then
-            isAimingAtTarget = false
-        end
-
-        self:SetTurretAngle( newAng )
-        self:SetIsAimingAtTarget( isAimingAtTarget )
-        self:ManipulateTurretBones( newAng )
-    end
-end
-
-local ExpDecay = Glide.ExpDecay
-
---- Override this base class function.
-function ENT:EngineThink( dt )
-    local selfTbl = GetTable( self )
-
-    local inputThrottle = self:GetInputFloat( 1, "accelerate" )
-    local inputBrake = self:GetInputFloat( 1, "brake" )
-    local inputSteer = self:GetInputFloat( 1, "steer" )
-    local amphibiousMode = self.IsAmphibious and self:GetWaterState() > 0
-
-    selfTbl.isTurningInPlace = selfTbl.CanTurnInPlace and not amphibiousMode
-        and selfTbl.groundedCount == selfTbl.wheelCount
-        and Abs( selfTbl.forwardSpeed ) < 100 and Abs( inputSteer ) > 0.1
-        and Abs( inputThrottle + inputBrake ) < 0.1
-
-    if selfTbl.isTurningInPlace then
-        self:SetGear( 1 )
-
-        -- Custom engine logic
-        local throttle = ExpDecay( self:GetEngineThrottle(), Abs( inputSteer ), 4, dt )
-
-        self:SetEngineThrottle( throttle )
-
-        local minRPM = self:GetMinRPM()
-        local rpmRange = self:GetMaxRPM() - minRPM
-        local currentPower = ( self:GetEngineRPM() - minRPM ) / rpmRange
-
-        currentPower = ExpDecay( currentPower, throttle * 0.5, 2, dt )
-
-        self:SetFlywheelRPM( minRPM + rpmRange * currentPower )
-
-        local torque = self:GetMaxRPMTorque() * selfTbl.TurnInPlaceTorqueMultiplier * inputSteer * throttle
-
-        selfTbl.availableFrontTorque = torque
-        selfTbl.availableRearTorque = -torque
-        selfTbl.frontBrake = 0
-        selfTbl.rearBrake = 0
-    else
-        BaseClass.EngineThink( self, dt )
-    end
-end
-
---- Override this base class function.
-function ENT:UpdateSteering( dt )
-    local selfTbl = GetTable( self )
-
-    if selfTbl.isTurningInPlace then
-        local inputSteer = ExpDecay( selfTbl.inputSteer, self:GetInputFloat( 1, "steer" ), 4, dt )
-
-        self:SetSteering( inputSteer )
-        selfTbl.steerAngle[2] = inputSteer * -70
-        selfTbl.inputSteer = inputSteer
-    else
-        BaseClass.UpdateSteering( self, dt )
-    end
-end
-
-local Clamp = math.Clamp
-
-local traction, tractionFront, tractionRear
-local frontTorque, rearTorque, steerAngle, frontBrake, rearBrake
-local groundedCount, rpm, avgRPM, totalSideSlip, totalForwardSlip, totalAngVel, state
-
---- Override this base class function.
---- On tanks, if `isTurningInPlace` is true, `frontTorque` and `rearTorque`
---- becomes the torque for the right-side track wheels and left-side track wheels respectively.
-function ENT:WheelThink( dt )
-    local selfTbl = GetTable( self )
-
-    local phys = self:GetPhysicsObject()
-    local isAsleep = IsValid( phys ) and phys:IsAsleep()
-    local isTurningInPlace = selfTbl.isTurningInPlace
-
-    local maxRPM = self:GetTransmissionMaxRPM( self:GetGear() )
-    local inputHandbrake = self:GetInputBool( 1, "handbrake" )
-
-    traction = self:GetForwardTractionBias()
-    tractionFront = ( 1 + Clamp( traction, -1, 0 ) ) * selfTbl.frontTractionMult
-    tractionRear = ( 1 - Clamp( traction, 0, 1 ) ) * selfTbl.rearTractionMult
-
-    frontTorque = selfTbl.availableFrontTorque
-    rearTorque = selfTbl.availableRearTorque
-    steerAngle = selfTbl.steerAngle
-
-    frontBrake, rearBrake = selfTbl.frontBrake, selfTbl.rearBrake
-    groundedCount, avgRPM, totalSideSlip, totalForwardSlip, totalAngVel = 0, 0, 0, 0, 0
-
-    for _, w in EntityPairs( selfTbl.wheels ) do
-        w:Update( self, steerAngle, isAsleep, dt )
-
-        totalSideSlip = totalSideSlip + w:GetSideSlip()
-        totalForwardSlip = totalForwardSlip + w:GetForwardSlip()
-
-        rpm = w:GetRPM()
-        avgRPM = avgRPM + rpm * w.distributionFactor
-
-        state = w.state
-        state.brake = w.isFrontWheel and frontBrake or rearBrake
-        state.forwardTractionMult = w.isFrontWheel and tractionFront or tractionRear
-        state.sideTractionMult = w.isFrontWheel and selfTbl.frontSideTractionMult or selfTbl.rearSideTractionMult
-
-        if state.isOnGround then
-            groundedCount = groundedCount + 1
-            totalAngVel = totalAngVel + Abs( state.angularVelocity )
-
-            if isTurningInPlace then
-                state.torque = w.sideDistributionFactor * ( w.isOnRightSide and frontTorque or rearTorque )
-            else
-                state.torque = w.distributionFactor * ( w.isFrontWheel and frontTorque or rearTorque )
-            end
-        else
-            state.torque = 0
-        end
-
-        if inputHandbrake and not w.isFrontWheel then
-            state.angularVelocity = 0
-        end
-
-        if rpm > maxRPM then
-            w:SetRPM( maxRPM )
-        end
-    end
-
-    selfTbl.avgPoweredRPM = avgRPM
-    selfTbl.groundedCount = groundedCount
-    selfTbl.avgSideSlip = totalSideSlip / selfTbl.wheelCount
-    selfTbl.avgForwardSlip = totalForwardSlip / selfTbl.wheelCount
-
-    self:SetTrackSpeed( isAsleep and 0 or totalAngVel / self.wheelCount )
+	return true
 end
