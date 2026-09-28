@@ -1,7 +1,6 @@
 ENT.Type = "anim"
-ENT.Author = "Mannytko"
-ENT.Category = "ZCity Other"
-ENT.PrintName = "Bugbait"
-ENT.Spawnable = true
-ENT.AdminOnly = false
-ENT.IconOverride = "entities/weapon_bugbait.png"
+ENT.Base = "base_gmodentity"
+ENT.PrintName = "Cyanide canister"
+ENT.Spawnable = false
+ENT.totalparticles = 30
+ENT.Model = "models/jordfood/jtun.mdl"

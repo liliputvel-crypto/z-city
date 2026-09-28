@@ -1,103 +1,96 @@
 AddCSLuaFile("cl_init.lua")
 AddCSLuaFile("shared.lua")
 include("shared.lua")
+
+util.AddNetworkString("cyanide_debug")
 function ENT:Initialize()
-	self:SetModel("models/mmod/weapons/w_bugbait.mdl")
+	self.spawntime = CurTime()
+	self.particles = {}
+	self:SetModel(self.Model)
 	self:PhysicsInit(SOLID_VPHYSICS)
 	self:SetMoveType(MOVETYPE_VPHYSICS)
 	self:SetSolid(SOLID_VPHYSICS)
-	self:DrawShadow(true)
-	self:SetUseType(USE_TOGGLE)
 	self:SetCollisionGroup(COLLISION_GROUP_WEAPON)
-	timer.Simple(0.1, function()
-		if not IsValid(self) then return end
-		self:SetCollisionGroup(COLLISION_GROUP_NONE)
-	end)
+	self:SetUseType(SIMPLE_USE)
+	self:DrawShadow(true)
 	local phys = self:GetPhysicsObject()
-	if phys:IsValid() then
-		phys:SetMass(3)
+
+	if IsValid(phys) then
+		phys:SetMass(1)
 		phys:Wake()
+		phys:EnableMotion(true)
 	end
 end
-
-function ENT:PhysicsCollide(data, physobj)
-	if data.DeltaTime > .2 and data.Speed > 120 then self:Detonate(data) end
-end
-
-function ENT:Use(ply)
-	if self:IsPlayerHolding() then return end
-
-	ply:PickupObject(self)
-end
-
-function ENT:OnTakeDamage(dmginfo)
-	self:TakePhysicsDamage(dmginfo)
-	local Dmg = dmginfo:GetDamage()
-	if Dmg >= 1 then
-		self:Detonate()
-	end
-end
-
+local ents_FindInSphere, CurTime, ipairs, table, math, VectorRand = ents.FindInSphere, CurTime, ipairs, table, math, VectorRand
 function ENT:Think()
-	if self:WaterLevel() > 0 then
-		self:Detonate()
+	if self.spawntime + 10 > CurTime() then return end
+	--if util.PointContents(self:GetPos()) --если в воде добавить проверку потом
+	if (#self.particles < self.totalparticles) and ((math.Round(CurTime() - self.spawntime) % 3) == 0) then
+		table.insert(self.particles,{self:GetPos(),VectorRand(-5,5),CurTime() + 60})
 	end
-	self:NextThink(CurTime() + 0.5)
-	return true
-end
 
-function ENT:Detonate(data)
-	local SelfPos, Owner = self:LocalToWorld(self:OBBCenter()), self:GetOwner() or self
-	timer.Simple(.01, function()
-		if not IsValid(self) then return end
-		for i = 0, 1 do
-			if data then
-				local effData = EffectData()
-				effData:SetOrigin(SelfPos)
-				effData:SetMagnitude(0.1)
-				effData:SetScale(math.Rand(0.25, 0.65))
-				effData:SetRadius(0.1)
-				util.Effect("StriderBlood", effData)
-				util.Decal("BeerSplash", data.HitPos + data.HitNormal, data.HitPos - data.HitNormal)
-			end
+	if (#self.particles == self.totalparticles) and not self.particles[#self.particles] then
+		return
+	end
+
+	for i,tbl in ipairs(self.particles) do
+		if not tbl then continue end
+		local pos,vel,time = tbl[1],tbl[2],tbl[3]
+		if time < CurTime() then self.particles[i] = false continue end
+		
+		tbl[2] = vel - vector_up * 0.2
+
+		local tr = util.TraceLine({start = pos,endpos = pos + vel,filter = self,mask = bit.bor(MASK_SOLID_BRUSHONLY,CONTENTS_WATER)})
+		
+		tbl[1] = (tr.Hit and tr.HitPos or pos + vel)
+		
+		local velLen = vel:Length()
+		if tr.Hit then
+			local vec = vel:Angle()
+			vec:RotateAroundAxis(tr.HitNormal,180)
+			tbl[2] = -vec:Forward() * velLen
 		end
-	end)
 
-	hg.EmitAISound(SelfPos, 1024, 16, 512)
-
-	for _, npc in ipairs(ents.FindInSphere(SelfPos, 1024)) do
-		if IsValid(npc) and npc:IsNPC() and npc:GetClass() == "npc_antlion" then
-			npc:AddRelationship("player D_LI 99")
-			npc:SetLastPosition(self:GetPos())
-			npc:SetSchedule(SCHED_FORCED_GO_RUN)
-			npc:EmitSound("npc/antlion/distract1.wav", 100, math.random(80, 120))
-			npc.SatisfactionEndTime = CurTime() + 60
-
-			if not npc.SatisfactionEndTime then
-				hook.Add("Think", npc:EntIndex(), function()
-					if npc.SatisfactionEndTime < CurTime() or not IsValid(npc) then
-						npc:AddRelationship("player D_HT 99")
-						npc.SatisfactionEndTime = nil
-						hook.Remove("Think", npc:EntIndex())
+		for i,ent in ipairs(ents_FindInSphere(pos,64)) do
+			if (not ent.organism) or ent.organism.poison3 or ent.organism.holdingbreath then continue end
+			if not ent.organism.owner:IsPlayer() then continue end
+			if util.TraceLine({start = pos,endpos = ent:GetPos(),filter = {self,ent},mask = MASK_SOLID_BRUSHONLY}).Hit then continue end
+			
+			if (ent.organism.owner.armors["face"] != "mask2") and ent.PlayerClassName ~= "Combine" and (math.random(2) == 1) then
+				local mode_hmcd = (zb and zb.modes) and zb.modes["hmcd"]
+				
+				if mode_hmcd then
+					if(ent.SubRole == "traitor_chemist")then
+						local ply_cyanide_accumulated = AddChemicalToPlayer(ent, "HCN", 10)
+						
+						if(ply_cyanide_accumulated > 100)then
+							ent.organism.poison3 = CurTime()
+						end
+						
+						NetworkChemicalResistanceOfPlayer(ent)
+						
+						ent.PassiveAbility_ChemicalAccumulation_NextNetworkTime = CurTime() + 1
+						
+						-- ent:ChatPrint("cyanide = " .. math.Round(ply_cyanide_accumulated) .. " / " .. "10")
+					else
+						ent.organism.poison3 = CurTime()
 					end
-				end)
-			end
-
-			for i, ent in ipairs(ents.FindInSphere(SelfPos, 512)) do
-				if ent ~= self:GetOwner() and npc:Visible(ent) and ent:GetClass() ~= "npc_antlion" then
-					npc:AddEntityRelationship(ent, D_HT, 99)
+				else
+					ent.organism.poison3 = CurTime()
 				end
 			end
 		end
 	end
+	--[[net.Start("cyanide_debug")
+	net.WriteTable(self.particles)
+	net.Broadcast()--]]
+	self:NextThink(CurTime() + 1)
+	return true
+end
 
-	timer.Simple(.02, function()
-		if not IsValid(self) then return end
-		sound.Play("weapons/mmod/bugbait/bugbait_impact"..(math.random(1, 2) and 1 or 3)..".wav", SelfPos, 80, math.random(95, 105))
-	end)
-
-	timer.Simple(.06, function()
-		if not IsValid(self) then return end
-		self:Remove()
-	end)
+function ENT:OnRemove()
+	self.particles = {}
+	net.Start("cyanide_debug")
+	net.WriteTable(self.particles)
+	net.Broadcast()
 end
