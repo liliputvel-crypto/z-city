@@ -1,231 +1,244 @@
 include( "shared.lua" )
 
-DEFINE_BASECLASS( "base_glide_aircraft" )
+DEFINE_BASECLASS( "base_glide_car" )
 
---- Implement the base class `OnTurnOn` function.
-function ENT:OnTurnOn()
-    if self:GetPower() < 0.01 then
-        self:EmitSound( self.StartSound, 80, 100, 0.6 )
+function ENT:SetupLeftTrack( materialSlot, texture, bumpmap )
+    self.leftTrackSlot = materialSlot
+    self.leftTrackScroll = Vector()
+    self.leftTrackTexture = texture
+    self.leftTrackBumpMap = bumpmap
+    self:SetSubMaterial( materialSlot, "!glide_tank_track_l" )
+end
+
+function ENT:SetupRightTrack( materialSlot, texture, bumpmap )
+    self.rightTrackSlot = materialSlot
+    self.rightTrackScroll = Vector()
+    self.rightTrackTexture = texture
+    self.rightTrackBumpMap = bumpmap
+    self:SetSubMaterial( materialSlot, "!glide_tank_track_r" )
+end
+
+--- Implement this base class function.
+function ENT:AllowFirstPersonMuffledSound()
+    return false
+end
+
+--- Override this base class function.
+function ENT:OnActivateWeapon( weapon, slotIndex )
+    if slotIndex > 1 then
+        BaseClass.OnActivateWeapon( self, weapon, slotIndex )
+    else
+        -- Disable default cannon crosshair, since we'll draw our own
+        weapon.CrosshairImage = ""
+        weapon.Name = "#glide.weapons.cannon"
+        weapon.Icon = "glide/icons/rocket.png"
     end
 end
 
---- Implement this base class function.
-function ENT:AllowWindSound()
-    return true, 0.8 - self:GetPower()
+--- Override this base class function.
+function ENT:OnPostInitialize()
+    BaseClass.OnPostInitialize( self )
+
+    self.currentTurretAng = Angle()
+    self.targetTurretAng = Angle()
 end
 
---- Implement this base class function.
-function ENT:OnActivateSounds()
-    self:CreateLoopingSound( "engine", self.EngineSoundPath, self.EngineSoundLevel )
-    self:CreateLoopingSound( "exhaust", self.ExhaustSoundPath, self.ExhaustSoundLevel )
-    self:CreateLoopingSound( "distant", self.DistantSoundPath, self.DistantSoundLevel )
+--- Override this base class function.
+function ENT:OnLocalPlayerEnter( seatIndex )
+    BaseClass.OnLocalPlayerEnter( self, seatIndex )
+    self.isPredicted = seatIndex == 1
+end
 
-    if self.ThrustSound ~= "" then
-        self:CreateLoopingSound( "thrust", self.ThrustSound, self.ThrustSoundLevel )
+--- Override this base class function.
+function ENT:OnLocalPlayerExit()
+    BaseClass.OnLocalPlayerExit( self )
+    self.isPredicted = false
+end
+
+--- Override this base class function.
+function ENT:DeactivateMisc()
+    BaseClass.DeactivateMisc( self )
+
+    if self.trackSound then
+        self.trackSound:Stop()
+        self.trackSound = nil
     end
 
-    if self.PropSoundPath == "" then return end
-
-    -- Create a client-side entity to play the propeller sound
-    self.entProp = ClientsideModel( "models/hunter/plates/plate.mdl" )
-    self.entProp:SetPos( self:LocalToWorld( self.PropOffset ) )
-    self.entProp:Spawn()
-    self.entProp:SetParent( self )
-    self.entProp:SetNoDraw( true )
-
-    self:CreateLoopingSound( "prop", self.PropSoundPath, self.PropSoundLevel, self.entProp )
-end
-
---- Implement this base class function.
-function ENT:OnDeactivateSounds()
-    if IsValid( self.entProp ) then
-        self.entProp:Remove()
-        self.entProp = nil
+    if self.turretSound then
+        self.turretSound:Stop()
+        self.turretSound = nil
     end
-end
 
---- Implement this base class function.
-function ENT:OnActivateMisc()
-    self.controlSoundCD = 0
-    self.nextControlTime = 0
-    self.lastControlInput = {}
+    if self.leftTrackSlot then
+        self:SetSubMaterial( self.leftTrackSlot, nil )
+        self.leftTrackSlot = nil
+        self.leftTrackTexture = nil
+        self.leftTrackBumpMap = nil
+    end
+
+    if self.rightTrackSlot then
+        self:SetSubMaterial( self.rightTrackSlot, nil )
+        self.rightTrackSlot = nil
+        self.rightTrackTexture = nil
+        self.rightTrackBumpMap = nil
+    end
 end
 
 local Abs = math.abs
-
-function ENT:UpdateControlSurfaceSound( nwFunc, t )
-    local controlInput = Abs( self[nwFunc]( self ) ) > 0.5
-
-    if self.lastControlInput[nwFunc] ~= controlInput then
-        self.lastControlInput[nwFunc] = controlInput
-
-        if t > self.controlSoundCD then
-            self.controlSoundCD = t + 0.5
-            Glide.PlaySoundSet( "Glide.Plane.ControlSurface", self, 0.5 )
-        end
-    end
-end
-
-local RealTime = RealTime
+local Clamp = math.Clamp
+local FrameTime = FrameTime
+local ExpDecayAngle = Glide.ExpDecayAngle
+local GetVolume = Glide.Config.GetVolume
 
 --- Override this base class function.
 function ENT:OnUpdateMisc()
     BaseClass.OnUpdateMisc( self )
 
-    self:OnUpdateAnimations()
-
-    local t = RealTime()
-
-    if t > self.nextControlTime then
-        self.nextControlTime = t + 0.1
-        self:UpdateControlSurfaceSound( "GetElevator", t )
-        self:UpdateControlSurfaceSound( "GetRudder", t )
-        self:UpdateControlSurfaceSound( "GetAileron", t )
-    end
-end
-
-local Clamp = math.Clamp
-local Remap = math.Remap
-local GetVolume = Glide.Config.GetVolume
-
---- Implement this base class function.
-function ENT:OnUpdateSounds()
-    if self.isLazyThink then return end
-
-    local sounds = self.sounds
-    local vol = GetVolume( "aircraftVolume" )
-
-    for _, snd in pairs( sounds ) do
-        if not snd:IsPlaying() then
-            snd:PlayEx( 0, 1 )
-        end
+    if self.leftTrackSlot then
+        self:SetSubMaterial( self.leftTrackSlot, "!glide_tank_track_l" )
     end
 
-    local power = self:GetPower()
-    local power01 = Clamp( power, 0, 1 )
-    local pitch = self:GetExtraPitch()
-
-    if sounds.prop then
-        sounds.prop:ChangePitch( Remap( power, 1, 2, self.PropSoundMinPitch, self.PropSoundMaxPitch ) )
-        sounds.prop:ChangeVolume( power01 * self.PropSoundVolume * vol )
+    if self.rightTrackSlot then
+        self:SetSubMaterial( self.rightTrackSlot, "!glide_tank_track_r" )
     end
 
-    if sounds.thrust then
-        local thrustVol = Remap( Clamp( self:GetThrottle(), 0, 1 ), 0, 1, self.ThrustSoundLowVolume, self.ThrustSoundHighVolume )
-
-        sounds.thrust:ChangePitch( Remap( power, 0, 2, self.ThrustSoundMinPitch, self.ThrustSoundMaxPitch ) )
-        sounds.thrust:ChangeVolume( power01 * thrustVol * vol )
-    end
-
-    sounds.engine:ChangePitch( Remap( power, 1, 2, self.EngineSoundMinPitch, self.EngineSoundMaxPitch ) * power01 * pitch )
-    sounds.engine:ChangeVolume( power01 * self.EngineSoundVolume * vol )
-
-    sounds.exhaust:ChangePitch( Remap( power, 1, 2, self.ExhaustSoundMinPitch, self.ExhaustSoundMaxPitch ) * power01 * pitch )
-    sounds.exhaust:ChangeVolume( power01 * self.ExhaustSoundVolume * vol )
-
-    vol = vol * Clamp( self.rfSounds.lastDistance / 1000000, 0, 1 )
-
-    sounds.distant:ChangePitch( Remap( power, 1, 2, 80, 100 ) )
-    sounds.distant:ChangeVolume( vol * power01 )
-
-    -- Handle damaged engine sound
-    local health = self:GetEngineHealth()
-
-    if health < 0.5 then
-        if sounds.rattle then
-            sounds.rattle:ChangeVolume( Clamp( power01 * ( 1 - health ), 0, 1 ) * 0.8 )
-        else
-            local snd = self:CreateLoopingSound( "rattle", self.EngineRattleSound, 85, self )
-            snd:PlayEx( 0.1, 100 )
-        end
-
-    elseif sounds.rattle then
-        sounds.rattle:Stop()
-        sounds.rattle = nil
-    end
-end
-
-DEFINE_BASECLASS( "base_glide_aircraft" )
-
-local Floor = math.floor
-local ExpDecay = Glide.ExpDecay
-local SimpleText = draw.SimpleText
-
-local Config = Glide.Config
-local DrawIcon = Glide.DrawIcon
-local DrawFilledCircle = Glide.DrawFilledCircle
-local DrawOutlinedCircle = Glide.DrawOutlinedCircle
-
-local colors = {
-    bg = Color( 30, 30, 30, 220 ),
-    bar = Glide.THEME_COLOR,
-    icon = Color( 255, 255, 255, 255 ),
-    iconDisabled = Color( 60, 60, 60, 255 ),
-    speedBars = Color( 220, 220, 220, 255 )
-}
-
-local size, x, y
-local power = 0
-
---- Override this base class function.
-function ENT:DrawVehicleHUD( screenW, screenH )
-    local playerListWidth = BaseClass.DrawVehicleHUD( self, screenW, screenH )
-
-    if not Config.showHUD then return end
-
-    size = Floor( screenH * 0.15 )
-
-    x = screenW - size - playerListWidth - Floor( screenH * 0.01 )
-    y = screenH - size - Floor( screenH * 0.03 )
-
-    local r = size * 0.5
     local dt = FrameTime()
+    local driver = self:GetDriver()
+    local lastYaw = self.currentTurretAng[2]
 
-    -- Throttle
-    power = ExpDecay( power, self:GetPower(), 20, dt )
-    colors.bar.a = 255
+    if self.isPredicted and IsValid( driver ) then
+        self.currentTurretAng = self:UpdateTurret( driver, dt, self.currentTurretAng )
+    else
+        local curAng = self.currentTurretAng
+        local targetAng = self:GetTurretAngle()
 
-    DrawOutlinedCircle( r, x + r, y + r, size * 0.08, colors.bg )
-    DrawOutlinedCircle( r * 0.97, x + r, y + r, size * 0.05, colors.bar, 180 * power, 360 )
-
-    -- Speed
-    local speedR = r * 0.8
-
-    DrawFilledCircle( speedR, x + r, y + r, colors.bg )
-    DrawOutlinedCircle( speedR, x + r, y + r, size * 0.02, colors.speedBars )
-
-    local speed = self:GetVelocity():Length()
-
-    -- Convert Source units to MPH
-    speed = speed * 0.0568182
-
-    if Config.useKMH then
-        speed = speed * 1.60934 -- Convert MPH to km/h
+        curAng[1] = ExpDecayAngle( curAng[1], targetAng[1], 30, dt )
+        curAng[2] = ExpDecayAngle( curAng[2], targetAng[2], 30, dt )
     end
 
-    local unit = Config.useKMH and " km/h" or " mph"
+    self:ManipulateTurretBones( self.currentTurretAng )
 
-    SimpleText( Floor( speed ) .. unit, "GlideHUD", x + size * 0.5, y + size * 0.48, colors.icon, 1, 4 )
+    local speed = Abs( self:GetTrackSpeed() )
 
-    -- Engine state
-    DrawIcon( x + size * 0.5, y + size * 0.65, "glide/icons/engine.png", size * 0.2, self:IsEngineOn() and colors.icon or colors.iconDisabled )
+    if speed > 1 then
+        if self.trackSound then
+            self.trackSound:ChangeVolume( Clamp( speed * 0.2, 0, 1 ) * self.TrackVolume * GetVolume( "carVolume" ) )
+            self.trackSound:ChangePitch( 70 + Clamp( speed * 0.02, 0, 1 ) * 30 )
+        else
+            self.trackSound = CreateSound( self, self.TrackSound )
+            self.trackSound:SetSoundLevel( 80 )
+            self.trackSound:PlayEx( 0.0, 100 )
+        end
 
-    -- Wing stall warning
-    if self:GetIsStalling() then
-        surface.SetFont( "GlideHUD" )
-
-        local text = Glide.GetLanguageText( "hud.stall" )
-        w, h = surface.GetTextSize( text )
-
-        w = w + screenW * 0.01
-        h = h + screenW * 0.01
-
-        x = x + ( size * 0.5 ) - ( w * 0.5 )
-        y = y - h - size * 0.1
-
-        surface.SetDrawColor( 255, 100, 100, 200 )
-        surface.DrawRect( x, y, w, h )
-
-        SimpleText( text, "GlideHUD", x + w * 0.5, y + h * 0.5, colors.icon, 1, 1 )
+    elseif self.trackSound then
+        self.trackSound:Stop()
+        self.trackSound = nil
     end
+
+    local yawSpeed = Abs( lastYaw - self.currentTurretAng[2] ) / dt
+    local turretVolume = Clamp( yawSpeed * 0.05, 0, 1 )
+
+    if turretVolume > 0 then
+        turretVolume = turretVolume - dt
+
+        if self.turretSound then
+            self.turretSound:ChangeVolume( turretVolume * self.TurrentMoveVolume )
+        else
+            self.turretSound = CreateSound( self, self.TurrentMoveSound )
+            self.turretSound:SetSoundLevel( 80 )
+            self.turretSound:PlayEx( turretVolume * self.TurrentMoveVolume, 100 )
+        end
+
+    elseif self.turretSound then
+        self.turretSound:Stop()
+        self.turretSound = nil
+    end
+end
+
+do
+    local Camera = Glide.Camera
+    local DrawWeaponCrosshair = Glide.DrawWeaponCrosshair
+
+    local SetColor = surface.SetDrawColor
+    local SetMaterial = surface.SetMaterial
+    local DrawTexturedRectRotated = surface.DrawTexturedRectRotated
+
+    local crosshairColor = {
+        [true] = Color( 255, 255, 255, 255 ),
+        [false] = Color( 150, 150, 150, 100 )
+    }
+
+    local matBody = Material( "materials/glide/tank_body.png", "smooth" )
+    local matTurret = Material( "materials/glide/tank_turret.png", "smooth" )
+    local CanUseWeaponry = Glide.CanUseWeaponry
+
+    --- Override this base class function.
+    function ENT:DrawVehicleHUD( screenW, screenH )
+        BaseClass.DrawVehicleHUD( self, screenW, screenH )
+
+        if CanUseWeaponry( LocalPlayer() ) then
+            DrawWeaponCrosshair( screenW * 0.5, screenH * 0.5, "glide/aim_tank.png", 0.14, crosshairColor[self:GetIsAimingAtTarget()] )
+        end
+
+        if not Camera.isInFirstPerson then return end
+
+        local ang = 0
+
+        if Camera:IsFixed() then
+            ang = -Camera.angles[2]
+        else
+            ang = -self:WorldToLocalAngles( Camera.angles )[2]
+        end
+
+        local x, y = screenW * 0.5, screenH * 0.92
+        local size = screenH * 0.15
+
+        SetColor( 255, 255, 255, 255 )
+
+        SetMaterial( matBody )
+        DrawTexturedRectRotated( x, y, size, size, ang )
+
+        ang = ang + self.currentTurretAng[2]
+
+        SetMaterial( matTurret )
+        DrawTexturedRectRotated( x, y, size, size, ang )
+    end
+end
+
+local matTrackL = CreateMaterial( "glide_tank_track_l", "VertexLitGeneric", {
+    ["$alphatest"] = "1",
+    ["$allowdiffusemodulation"] = "false",
+    ["$basetexture"] = "models/gta5/vehicles/rhino/tracks"
+} )
+
+local matTrackR = CreateMaterial( "glide_tank_track_r", "VertexLitGeneric", {
+    ["$alphatest"] = "1",
+    ["$allowdiffusemodulation"] = "false",
+    ["$basetexture"] = "models/gta5/vehicles/rhino/tracks"
+} )
+
+local scrollMatrix = Matrix()
+
+function ENT:Draw()
+    if self.leftTrackBumpMap then
+        matTrackL:SetTexture( "$bumpmap", self.leftTrackBumpMap )
+    end
+
+    if self.leftTrackTexture then
+        scrollMatrix:SetTranslation( self.leftTrackScroll )
+        matTrackL:SetTexture( "$basetexture", self.leftTrackTexture )
+        matTrackL:SetMatrix( "$basetexturetransform", scrollMatrix )
+    end
+
+    if self.rightTrackBumpMap then
+        matTrackR:SetTexture( "$bumpmap", self.rightTrackBumpMap )
+    end
+
+    if self.rightTrackTexture then
+        scrollMatrix:SetTranslation( self.rightTrackScroll )
+        matTrackR:SetTexture( "$basetexture", self.rightTrackTexture )
+        matTrackR:SetMatrix( "$basetexturetransform", scrollMatrix )
+    end
+
+    self:DrawModel()
 end

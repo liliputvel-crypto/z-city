@@ -1,119 +1,175 @@
 ENT.Type = "anim"
-ENT.Base = "base_glide_aircraft"
+ENT.Base = "base_glide_car"
 
-ENT.PrintName = "Glide Plane"
+ENT.PrintName = "Glide Tank"
 ENT.Author = "StyledStrike"
 ENT.AdminOnly = false
 ENT.AutomaticFrameAdvance = true
 
 -- Change vehicle type
-ENT.VehicleType = Glide.VEHICLE_TYPE.PLANE
+ENT.VehicleType = Glide.VEHICLE_TYPE.TANK
 
--- Setup the plane propeller position
-ENT.PropOffset = Vector()
+-- Tweak max. chassis health
+ENT.MaxChassisHealth = 6000
 
-DEFINE_BASECLASS( "base_glide_aircraft" )
+-- Prevent players from editing these NW variables
+ENT.UneditableNWVars = {
+    WheelRadius = true,
+    BrakePower = true,
+    SuspensionLength = true,
+    SpringStrength = true,
+    SpringDamper = true,
+
+    SideTractionMultiplier = true,
+    SideTractionMaxAng = true,
+    SideTractionMin = true,
+    SideTractionMax = true,
+
+    MinRPM = true,
+    MaxRPM = true,
+    MinRPMTorque = true,
+    MaxRPMTorque = true,
+    DifferentialRatio = true,
+    TransmissionEfficiency = true,
+    PowerDistribution = true,
+    ForwardTractionMax = true,
+    ForwardTractionBias = true
+}
+
+--[[
+    Turrets are predictable, so these properties
+    should be the same on both SERVER and CLIENT.
+]]
+
+-- Position of the turret's origin relative to the vehicle.
+ENT.TurretOffset = Vector( 0, 0, 50 )
+
+-- Turret pitch angle limits
+ENT.PitchAngMax = -25   -- Pitch up limit (yes, it's negative)
+ENT.PitchAngMin = 10    -- Pitch down limit (yes, it's positive)
+
+ENT.MaxYawSpeed = 50        -- Max. turret yaw rotation speed
+ENT.YawAcceleration = 1500  -- Turret yaw acceleration
+
+DEFINE_BASECLASS( "base_glide_car" )
 
 --- Override this base class function.
 function ENT:SetupDataTables()
     BaseClass.SetupDataTables( self )
 
-    self:NetworkVar( "Float", "Throttle" )
-    self:NetworkVar( "Float", "ExtraPitch" )
-
-    self:NetworkVar( "Float", "Elevator" )
-    self:NetworkVar( "Float", "Rudder" )
-    self:NetworkVar( "Float", "Aileron" )
-
-    self:NetworkVar( "Bool", "IsStalling" )
+    self:NetworkVar( "Float", "TrackSpeed" )
+    self:NetworkVar( "Angle", "TurretAngle" )
+    self:NetworkVar( "Bool", "IsAimingAtTarget" )
 end
 
+--- Override this base class function.
+function ENT:GetFirstPersonOffset()
+    return Vector( 0, 0, 90 )
+end
+
+--- Override this base class function.
+function ENT:GetPlayerSitSequence( _seatIndex )
+    return "sit"
+end
+
+-- Children classes should override this function
+-- to update the turret/cannon bones.
+--
+-- This exists both on the client and server side,
+-- to allow returning the correct bone position
+-- when creating the projectile serverside.
+function ENT:ManipulateTurretBones( _turretAngle ) end
+
 if CLIENT then
-    ENT.MaxSoundDistance = 15000
+    ENT.WheelSkidmarkScale = 1
 
-    -- Play this sound at startup
-    ENT.StartSound = "glide/aircraft/start_3.wav"
+    --- Override this base class function.
+    function ENT:GetCameraType( _seatIndex )
+        return 1 -- Glide.CAMERA_TYPE.TURRET
+    end
 
-    -- Play this sound from far away
-    ENT.DistantSoundPath = "glide/aircraft/distant_stunt.wav"
-    ENT.DistantSoundLevel = 120
+    -- Track sound parameters
+    ENT.TrackSound = ")glide/tanks/tracks_leopard.wav"
+    ENT.TrackVolume = 0.7
 
-    -- Play this sound at the propeller
-    ENT.PropSoundPath = "glide/aircraft/prop_stunt.wav"
-    ENT.PropSoundLevel = 80
-    ENT.PropSoundVolume = 0.7
-    ENT.PropSoundMinPitch = 62
-    ENT.PropSoundMaxPitch = 105
+    -- Turret sounds
+    ENT.TurrentMoveSound = "glide/tanks/turret_move.wav"
+    ENT.TurrentMoveVolume = 1.0
 
-    -- Play these sounds at the engine
-    ENT.EngineSoundPath = "glide/aircraft/engine_velum.wav"
-    ENT.EngineSoundLevel = 80
-    ENT.EngineSoundVolume = 0.6
-    ENT.EngineSoundMinPitch = 165
-    ENT.EngineSoundMaxPitch = 190
-
-    ENT.ExhaustSoundPath = "glide/aircraft/exhaust_stunt.wav"
-    ENT.ExhaustSoundLevel = 80
-    ENT.ExhaustSoundVolume = 0.7
-    ENT.ExhaustSoundMinPitch = 100
-    ENT.ExhaustSoundMaxPitch = 115
-
-    ENT.ThrustSound = ""
-    ENT.ThrustSoundLevel = 90
-    ENT.ThrustSoundLowVolume = 0.4
-    ENT.ThrustSoundHighVolume = 0.7
-    ENT.ThrustSoundMinPitch = 80
-    ENT.ThrustSoundMaxPitch = 90
-
-    -- Play this sound as the engine health gets depleted
-    ENT.EngineRattleSound = "glide/aircraft/rattle.wav"
-
-    -- Play this sound (to passengers only) when the wings are stalling
-    ENT.StallHornSound = "glide/ui/stall_beep.wav"
-    ENT.StallHornVolume = 1.0
-
-    -- Children classes should override this function
-    -- to update animations (the control surfaces for example).
-    function ENT:OnUpdateAnimations() end
+    -- Change a few engine sounds from the car class
+    ENT.StartSound = "Glide.Engine.TruckStart"
+    ENT.StartedSound = "glide/engines/start_tail_truck.wav"
 end
 
 if SERVER then
-    ENT.AngularDrag = Vector( -2, -2, -10 ) -- Roll, pitch, yaw
-    ENT.DamagedEngineSound = "Glide.Damaged.AircraftEngineBreakdown"
-    ENT.DamagedEngineVolume = 1.0
+    ENT.IsHeavyVehicle = true
+    ENT.ChassisMass = 20000
 
-    -- How far can the propeller's blades hit things
-    ENT.PropRadius = 50
+    ENT.BlastDamageMultiplier = 3
+    ENT.BlastForceMultiplier = 0.005
+    ENT.CollisionDamageMultiplier = 3
+    ENT.BulletDamageMultiplier = 0.25
 
-    -- Slow and fast models for the propeller.
-    -- Leave empty to not create the default propeller.
-    ENT.PropModel = ""
-    ENT.PropFastModel = ""  -- Can be "" to use the slow model
+    ENT.UnflipForce = 0.2
+    ENT.AirControlForce = Vector( 0.08, 0.03, 0.02 ) -- Roll, pitch, yaw
 
-    -- Ground steering variables
-    ENT.MaxSteerAngle = 40
-    ENT.SteerConeMaxSpeed = 800
-    ENT.ReverseTorque = 1000
-    ENT.MaxReverseSpeed = -300
+    ENT.SuspensionHeavySound = "Glide.Suspension.CompressTruck"
+    ENT.SuspensionDownSound = "Glide.Suspension.Stress"
 
-    -- Plane drag & force constants
-    ENT.PlaneParams = {
-        -- These drag forces only apply
-        -- when flying at max. liftSpeed.
-        liftAngularDrag = Vector( -5, -10, -3 ), -- (Roll, pitch, yaw)
-        liftForwardDrag = 0.1,
-        liftSideDrag = 3,
+    -- Can this tank "turn in place"?
+    ENT.CanTurnInPlace = true
 
-        liftFactor = 0.15,       -- How much of the up velocity to negate
-        maxSpeed = 1800,        -- Speed limit
-        liftSpeed = 1600,       -- Speed required to float
-        controlSpeed = 1200,    -- Speed required to have complete control of the plane
+    -- How much extra torque to apply when trying to spin in place?
+    ENT.TurnInPlaceTorqueMultiplier = 3
 
-        engineForce = 200,
-        alignForce = 300,
+    -- Turret parameters
+    ENT.TurretFireSound = ")glide/tanks/acf_fire4.mp3"
+    ENT.TurretFireVolume = 0.8
+    ENT.TurretRecoilForce = 50
+    ENT.TurretDamage = 550
 
-        pitchForce = 1000,
-        yawForce = 500,
-        rollForce = 1200
-    }
+    -- Override this base class function.
+    function ENT:GetGears()
+        return {
+            [-1] = 3, -- Reverse
+            [0] = 0, -- Neutral (this number has no effect)
+            [1] = 3
+        }
+    end
+
+    -- Children classes should override this function
+    -- to set where the cannon projectile is spawned.
+    function ENT:GetProjectileStartPos()
+        return self:GetPos()
+    end
+end
+
+local Clamp = math.Clamp
+local ExpDecayAngle = Glide.ExpDecayAngle
+local AngleDifference = Glide.AngleDifference
+
+function ENT:UpdateTurret( driver, dt, currentAng )
+    local aimPos = SERVER and driver:GlideGetAimPos() or Glide.GetCameraAimPos()
+    local origin = self:LocalToWorld( self.TurretOffset )
+    local targetDir = aimPos - origin
+    targetDir:Normalize()
+
+    local targetAng = self:WorldToLocalAngles( targetDir:Angle() )
+    local isAimingAtTarget = true
+
+    if targetAng[1] > self.PitchAngMin then
+        targetAng[1] = self.PitchAngMin
+        isAimingAtTarget = false
+
+    elseif targetAng[1] < self.PitchAngMax then
+        targetAng[1] = self.PitchAngMax
+        isAimingAtTarget = false
+    end
+
+    currentAng[1] = ExpDecayAngle( currentAng[1], targetAng[1], 10, dt )
+    currentAng[2] = currentAng[2] + Clamp( AngleDifference( currentAng[2], targetAng[2] ) * self.YawAcceleration * dt, -self.MaxYawSpeed, self.MaxYawSpeed ) * dt
+
+    isAimingAtTarget = isAimingAtTarget and targetDir:Dot( self:LocalToWorldAngles( currentAng ):Forward() ) > 0.99
+
+    return currentAng, isAimingAtTarget
 end
