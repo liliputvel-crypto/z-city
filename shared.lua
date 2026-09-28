@@ -1,8 +1,10 @@
 ENT.Type = "anim"
 ENT.Base = "base_gmodentity"
-ENT.PrintName = "Flashlight"
-ENT.Category = "ZCity Other"
+ENT.PrintName = "Weapon Sling"
 ENT.Spawnable = true
-ENT.Model = "models/runaway911/props/item/flashlight.mdl"
-ENT.IconOverride = "vgui/hud/hmcd_flash"
+ENT.Category = "ZCity Other"
+ENT.Model = "models/tourniquet/tourniquet.mdl"
+ENT.Color = Color(90,72,43)
+ENT.Material = "models/xqm/rails/gumball_1"
+ENT.IconOverride = "vgui/inventory/tactical_sling" -- vgui/inventory/ppsh41_sling
 ENT.IsZPickup = true
