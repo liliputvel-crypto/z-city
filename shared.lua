@@ -1,9 +1,5 @@
 ENT.Type = "anim"
-ENT.Base = "base_gmodentity"
-ENT.PrintName = "Bomb"
-ENT.Category = "ZCity Other"
-ENT.Spawnable = true
-ENT.AdminOnly = true
-ENT.Model = "models/jmod/explosives/bombs/c4/w_c4_planted.mdl"
-ENT.IconOverride = "vgui/wep_jack_hmcd_c4_charge"
-ENT.ExplodeTime = 90
+ENT.Base = "base_anim"
+ENT.PrintName = "Support Crate"
+ENT.Category = "Govno deki"
+ENT.Spawnable = false
