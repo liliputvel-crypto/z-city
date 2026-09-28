@@ -1,46 +1,40 @@
 include("shared.lua")
+ENT.HowToUseInstructions = "<font=ZCity_Tiny>"..string.upper( (input.LookupBinding("+use") or "BIND YOUR +USE KEY PLEASE. WRITE \"bind e +use\" IN CONSOLE FOR THE LOVE OF GOD") ).." to wear</font>"
+
 function ENT:Draw()
-	self:DrawModel()
+	if not self.PhysModel then
+		self:DrawModel()
+		return
+	end
+
+	local model = self.model
+	local pos, ang = LocalToWorld(self.PhysPos, self.PhysAng, self:GetPos(), self:GetAngles())
+	model:SetRenderOrigin(pos)
+	model:SetRenderAngles(ang)
+	model:DrawModel()
 end
 
---[[function ENT:Draw()
+function ENT:Think()
+end
 
-	self:DrawModel()
-	--ragdoll:GetBoneMatrix(ragdoll:LookupBone("ValveBiped.Bip01_Spine")):GetTranslation()
+function ENT:Initialize()
+	self.HudHintMarkup = markup.Parse("<font=ZCity_Tiny>".. self.PrintName .."</font>\n<font=ZCity_SuperTiny><colour=125,125,125>".. self.HowToUseInstructions .."</colour></font>",450)
+	self.model = ClientsideModel(self.Model, RENDERGROUP_OPAQUE)
+	if !IsValid(self.model) then return end
+	self.model:SetNoDraw(true)
+end
 
-	local ent = ents.FindByClass("prop_ragdoll")[1]
-
-	local hull = 10
-	local mins,maxs = -Vector(hull,hull,0),Vector(hull,hull,36)
-
-	local startpos = ent:GetPos()
-	local dir = ent:GetUp()
-	local len = 128
-
-	local offset = VectorRand(-32,32)
-	local newpos = startpos + offset
-
-	local t = {}
-	t.start = startpos
-	t.endpos = newpos
-	t.filter = ent
-	t.mask = MASK_PLAYERSOLID
-
-	local tr = util.TraceLine( t )
-	
-	if not tr.Hit then
-		local t = {}
-		t.start = startpos + offset
-		t.endpos = startpos + offset
-		t.maxs = maxs
-		t.mins = mins
-		t.filter = ent--{Entity(1),Entity(1).FakeRagdoll,self}
-		t.mask = MASK_PLAYERSOLID
-		local tr = util.TraceHull( t )
-		
-		local clr = color_white
-		if ( not tr.Hit ) then
-			render.DrawWireframeBox( tr.HitPos, Angle( 0, 0, 0 ), mins, maxs, clr, true )
-		end
+function ENT:OnRemove()
+	if IsValid(self.model) then
+		self.model:Remove()
+		self.model = nil
 	end
-end--]]--visual fakegetup
+end
+
+hook.Add("RagdollPerdiction","TransferMats",function(ragdoll, ply)
+	local armors = ragdoll.PredictedArmor
+	for k,v in pairs(armors) do
+		ragdoll:SetNWString("ArmorMaterials" .. v, ply:GetNWString("ArmorMaterials" .. v))
+		ragdoll:SetNWInt("ArmorSkins" .. v, ply:GetNWInt("ArmorSkins" .. v))
+	end
+end)
