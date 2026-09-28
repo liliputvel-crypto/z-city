@@ -2,117 +2,49 @@ AddCSLuaFile("cl_init.lua")
 AddCSLuaFile("shared.lua")
 include("shared.lua")
 
-util.AddNetworkString("flashbang")
-
-function ENT:InitAdd()
-    self:Activate()
+local red = Color( 255, 0, 0 )
+function ENT:Initialize()
+	self:SetModel(self.Model)
+	self:PhysicsInit(SOLID_VPHYSICS)
+	self:SetMoveType(MOVETYPE_VPHYSICS)
+	self:SetSolid(SOLID_VPHYSICS)
+	self:SetCollisionGroup(COLLISION_GROUP_WEAPON)
+	timer.Simple(0.1,function()
+		if not IsValid(self) then return end
+		self:SetCollisionGroup(COLLISION_GROUP_NONE)
+	end)
+	self:SetUseType(ONOFF_USE)
+	self:DrawShadow(true)
+	local phys = self:GetPhysicsObject()
+	if IsValid(phys) then
+		phys:SetMass(5)
+		phys:Wake()
+		phys:EnableMotion(true)
+	end
+	self.Tail = util.SpriteTrail( self, 0, red, true, 5, 1, 0.5, 1 / ( 5 + 1 ) * 0.5, "sprites/combineball_trail_red_1" )
 end
 
-local burnDamageRadius = 20
-local explosionDamageRadius = 30
-local disorientationRadius = 300
-function ENT:Explode()
-    if self:PoopBomb() then
-        self:EmitSound("weapons/p99/slideback.wav", 75)
-        self.Exploded = true
-        return
-    end
-    local SelfPos = self:GetPos()
+function ENT:AddThink()
+	if not self.timer then return end
+	self.nextthink = self.nextthink or CurTime()
+	if self.nextthink > CurTime() then return end
+	local time = self.timeToBoom - (CurTime() - self.timer)
 
-    local effectdata = EffectData()
-    effectdata:SetOrigin(SelfPos)
-    effectdata:SetScale(0.5)
-    effectdata:SetNormal(-self:GetAngles():Forward())
-    util.Effect("eff_jack_genericboom", effectdata)
-    hg.EmitAISound(SelfPos, 512, 16, 1)
+	self.nextthink = CurTime() + 0.5 * math.max(time / (self.timeToBoom * 0.75),0.5) 
+	
+	if not self.Exploded then
+		self:EmitSound("weapons/grenade/tick1.wav",65)
+		hg.EmitAISound(self:GetPos(), 256, 2, 8)
+	end
 
+	if time < 0 and not self.Exploded then
+		self:Explode()
+	end
+	--self:NextThink(CurTime() + 0.5 * math.max(time / (self.timeToBoom * 0.75),0.5))
+	--return true
+end
 
-    --[[net.Start("projectileFarSound")
-        net.WriteString(self.SoundMain)
-        net.WriteString(self.SoundFar)
-        net.WriteVector(SelfPos)
-        net.WriteEntity(self)
-        net.WriteBool(self:WaterLevel() > 0)
-        net.WriteString("")
-    net.Broadcast()--]]
-    
-    --self:EmitSound(self.SoundMain, 100, 100, 1, CHAN_WEAPON)
-    --self:EmitSound(self.SoundFar, 140, 100, 1, CHAN_WEAPON)
-    
-    timer.Simple(0.05, function()
-        if IsValid(self) then
-            self:EmitSound(table.Random(self.SoundBass), 150, 70, 0.95, CHAN_AUTO)
-        end
-    end)
-    
-    timer.Simple(0.1, function()
-        if IsValid(self) then
-            self:EmitSound(table.Random(self.SoundBass), 155, 60, 0.9, CHAN_BODY)
-        end
-    end)
-
-    EmitSound(self.SoundMain, SelfPos, self:EntIndex() + 100, CHAN_STATIC, 1, 70, nil, 100)
-    EmitSound(self.SoundMain, SelfPos, self:EntIndex() + 101, CHAN_STATIC, 1, 70, nil, 100)
-    EmitSound(self.SoundMain, SelfPos, self:EntIndex() + 102, CHAN_STATIC, 1, 70, nil, 100)
-    EmitSound(self.SoundFar, SelfPos, self:EntIndex() + 103, CHAN_STATIC, 1, 140, nil, 100)
-    
-    EmitSound("snd_jack_fireworkpop5.wav", SelfPos, self:EntIndex() + 200, CHAN_VOICE, 1, 150, nil, math.random(100, 110))
-    
-    --util.BlastDamage(self, self.owner, SelfPos, self.BlastDis / 0.01905, 5)
-
-    for _, ply in ipairs(ents.FindInSphere(SelfPos, 700)) do
-        if not ply:IsPlayer() or not ply:Alive() then continue end
-
-        if hg.isVisible(ply:GetShootPos(), SelfPos, {ply, self}, MASK_VISIBLE) then
-            net.Start("flashbang")
-                net.WriteVector(SelfPos)
-            net.Send(ply)
-        end
-
-        local tr = hg.ExplosionTrace(SelfPos, ply:GetPos(), {self, ply})
-
-        if tr.Hit then continue end
-
-        local distance = ply:GetPos():Distance(SelfPos)
-        local org = ply.organism  
-
-        if distance <= burnDamageRadius then
-            local dmginfo = DamageInfo()
-            dmginfo:SetDamage(50)
-            dmginfo:SetDamageType(DMG_BURN)
-
-
-            if IsValid(self.Owner) then
-                dmginfo:SetAttacker(self.Owner)
-            else
-                dmginfo:SetAttacker(self)  
-            end
-
-            ply:TakeDamageInfo(dmginfo)
-        end
-
-        if distance <= explosionDamageRadius then
-            local dmginfo = DamageInfo()
-            dmginfo:SetDamage(75)
-            dmginfo:SetDamageType(DMG_BLAST)
-
-            if IsValid(self.Owner) then
-                dmginfo:SetAttacker(self.Owner)
-            else
-                dmginfo:SetAttacker(self)  
-            end
-
-            ply:TakeDamageInfo(dmginfo)
-        end
-
-        if distance <= disorientationRadius then
-            if org then
-                hg.ExplosionDisorientation(org.owner, 5, 6)
-				hg.RunZManipAnim(org.owner, "shieldexplosion")
-                //org.owner:ViewPunch(Angle(0, 0, org.owner:GetAimVector():Dot((SelfPos - org.owner:EyePos()):GetNormalized()) * 55))
-            end
-        end
-    end
-
-    self:Remove()
+function ENT:PoopBomb()
+	self.Tail:Remove()
+	return math.random(100) == 100
 end
