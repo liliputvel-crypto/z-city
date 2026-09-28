@@ -1,6 +1,7 @@
 ENT.Type = "anim"
-ENT.Base = "base_gmodentity"
-ENT.PrintName = "ent_hg_smokenade"
-ENT.Spawnable = false
-ENT.Model = "models/props_junk/jlare.mdl"
-ENT.timeToBoom = 1
+ENT.Author = "Mannytko"
+ENT.Category = "ZCity Other"
+ENT.PrintName = "Snowball"
+ENT.Spawnable = true
+ENT.AdminOnly = false
+ENT.IconOverride = "vgui/wep_jack_hmcd_snowball"
