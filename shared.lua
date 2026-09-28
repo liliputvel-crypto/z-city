@@ -1,33 +1,32 @@
+-- All armed GTAV helicopters have a minigun and (optionally)
+-- homing missiles, so let's code that into a single base class.
+
 ENT.Type = "anim"
-ENT.Author = "Sadsalat"
-ENT.Category = "ZCity Other"
-ENT.PrintName = "Firework Base"
-ENT.IconOverride = "entities/gf2_rocket_large_01.png"
-ENT.Spawnable = true
-ENT.AdminOnly = true
-ENT.Model = "models/models/gf2/rogue_cheney/rockets/big/rocket_01.mdl"
-ENT.Sound = "garrys_fireworks_2/fireworks/explosions/fw_large_pellet_explosion.wav"
-ENT.SoundFar = "garrys_fireworks_2/fireworks/explosions/fw_large_pellet_explosion.wav"
-ENT.SoundWater = ""
-ENT.Speed = 3500
-ENT.TruhstTime = 3
-ENT.Oskole = false
-ENT.Fragmentation = 0
+ENT.Base = "base_glide_heli"
 
-ENT.BlastDamage = 20
-ENT.BlastDis = 5
+ENT.PrintName = "GTAV Armed Helicopter"
+ENT.Author = "StyledStrike"
 
-game.AddParticles("particles/pcfs_jack_muzzleflashes.pcf")
-game.AddParticles("particles/pcfs_jack_explosions_small3.pcf")
-game.AddParticles("particles/pcfs_jack_explosions_incendiary2.pcf")
+if CLIENT then
+    ENT.MinigunFireLoop = ")glide/weapons/mg_shoot_loop.wav"
+    ENT.MinigunSpinLoop = "glide/weapons/minigun_loop.wav"
 
-ENT.RocketTrail =  "gf2_firework_trail_main"
+    ENT.MinigunFireStop = ")glide/weapons/mg_shoot_stop.wav"
+    ENT.MinigunSpinStop = "glide/weapons/minigun_end.wav"
 
-function ENT:OnMatches()
-	self.LoopSndID = self:StartLoopingSound("garrys_fireworks_2/fireworks/flares/flare_sound.mp3")
-	timer.Simple(0.5,function()
-		if IsValid(self) then
-			self.Activated = true
-		end
-	end)
+    ENT.BulletOffsets = {}
+    ENT.BulletAngles = {}
+    ENT.MissileOffsets = {}
+end
+
+if SERVER then
+    ENT.BulletDamageMultiplier = 0.6
+end
+
+DEFINE_BASECLASS( "base_glide_heli" )
+
+function ENT:SetupDataTables()
+    BaseClass.SetupDataTables( self )
+
+    self:NetworkVar( "Bool", "FiringMinigun" )
 end
