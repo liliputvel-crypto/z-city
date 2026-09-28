@@ -1,10 +1,16 @@
-ENT.Type = "anim"
-ENT.Base = "base_gmodentity"
-ENT.PrintName = "Throwable base"
-ENT.Spawnable = false
-ENT.WorldModel = "models/jaanus/shuriken_small.mdl"
-ENT.MaxSpeed = 1500
+--[[-------------------------------------------------------------------------
 
-ENT.AttackHit = "Canister.ImpactHard"
-ENT.AttackHitFlesh = "snd_jack_hmcd_axehit.wav"
-ENT.Throwable = true
+We override the default fire visuals and sound by creating an entity of our own with the same name (entityflame),
+which is removed immediately on creation - this is the only functionality we care for.
+
+---------------------------------------------------------------------------]]
+
+AddCSLuaFile()
+
+DEFINE_BASECLASS("base_anim")
+
+if SERVER then
+	function ENT:Initialize()
+		self:Remove()
+	end
+end
