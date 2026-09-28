@@ -1,292 +1,151 @@
 ENT.Type = "anim"
-ENT.Base = "base_glide"
+ENT.Base = "base_glide_aircraft"
 
-ENT.PrintName = "Glide Car"
+ENT.PrintName = "Glide Helicopter"
 ENT.Author = "StyledStrike"
 ENT.AdminOnly = false
-ENT.Editable = true
+ENT.AutomaticFrameAdvance = true
 
 -- Change vehicle type
-ENT.VehicleType = Glide.VEHICLE_TYPE.CAR
+ENT.VehicleType = Glide.VEHICLE_TYPE.HELICOPTER
 
--- Should we prevent players from editing these NW variables?
-ENT.UneditableNWVars = {}
+-- Setup the helicopter's rotor positions
+ENT.MainRotorOffset = Vector()
+ENT.MainRotorAngle = Angle()
 
--- Should this vehicle use the siren system?
-ENT.CanSwitchSiren = false
+ENT.TailRotorOffset = Vector()
+ENT.TailRotorAngle = Angle()
 
--- Does this vehicle have headlights?
-ENT.CanSwitchHeadlights = true
-
--- Does this vehicle have turn signals?
-ENT.CanSwitchTurnSignals = true
-
--- Can this vehicle drive over water?
-ENT.IsAmphibious = false
-
-DEFINE_BASECLASS( "base_glide" )
+DEFINE_BASECLASS( "base_glide_aircraft" )
 
 --- Override this base class function.
 function ENT:SetupDataTables()
     BaseClass.SetupDataTables( self )
 
-    -- Setup default network variables. Do not override
-    -- these slots when creating your own on child classes!
-    self:NetworkVar( "Bool", "IsRedlining" )
-    self:NetworkVar( "Bool", "IsHonking" )
-    self:NetworkVar( "Int", "SirenState" )
+    self:NetworkVar( "Bool", "OutOfControl" )
+    self:NetworkVar( "Bool", "IsEngineDying" )
 
-    self:NetworkVar( "Int", "Gear" )
-    self:NetworkVar( "Float", "Steering" )
-    self:NetworkVar( "Float", "EngineRPM" )
-    self:NetworkVar( "Float", "EngineThrottle" )
-
-    self:NetworkVar( "Float", "Fuel" )
-    self:NetworkVar( "Float", "MaxFuel" )
-
-    -- All DT variables below this comment are editable properties
-    self:NetworkVar( "Vector", "TireSmokeColor", { KeyName = "TireSmokeColor", Edit = { type = "VectorColor", order = 0, category = "#glide.editvar.wheels" } } )
-
-    local order = 0
-    local uneditable = self.UneditableNWVars
-
-    -- We add a bunch of floats here so, this utility function helps.
-    local function AddFloatVar( key, min, max, category )
-        order = order + 1
-
-        local editData = Either( uneditable[key] == true or category == nil, nil, {
-            KeyName = key,
-            --Edit = { type = "Float", order = order, min = min, max = max, category = category }
-        } )
-
-        self:NetworkVar( "Float", key, editData )
-    end
-
-    local function AddBoolVar( key, category )
-        order = order + 1
-
-        self:NetworkVar( "Bool", key, {
-            KeyName = key,
-            --Edit = { type = "Bool", order = order, category = category }
-        } )
-    end
-
-    -- Steering parameters
-    AddFloatVar( "MaxSteerAngle", 10, 80, "#glide.editvar.steering" )
-    AddFloatVar( "SteerConeChangeRate", 2, 20, "#glide.editvar.steering" )
-    AddFloatVar( "SteerConeMaxSpeed", 100, 5000, "#glide.editvar.steering" )
-    AddFloatVar( "SteerConeMaxAngle", 0.05, 0.9, "#glide.editvar.steering" )
-    AddFloatVar( "CounterSteer", 0, 1, "#glide.editvar.steering" )
-
-    -- Fake engine parameters
-    AddBoolVar( "TurboCharged", "#glide.editvar.engine" )
-    AddBoolVar( "FastTransmission", "#glide.editvar.engine" )
-
-    AddFloatVar( "MinRPM", 500, 5000, "#glide.editvar.engine" )
-    AddFloatVar( "MaxRPM", 6000, 30000, "#glide.editvar.engine" )
-    AddFloatVar( "MinRPMTorque", 10, 20000, "#glide.editvar.engine" )
-    AddFloatVar( "MaxRPMTorque", 10, 20000, "#glide.editvar.engine" )
-    AddFloatVar( "DifferentialRatio", 0.05, 4, "#glide.editvar.engine" )
-    AddFloatVar( "TransmissionEfficiency", 0.3, 1, "#glide.editvar.engine" )
-    AddFloatVar( "PowerDistribution", -1, 1, "#glide.editvar.engine" )
-
-    -- Make wheel parameters available as network variables too
-    AddFloatVar( "WheelRadius", 10, 40, "#glide.editvar.wheels" )
-    AddFloatVar( "BrakePower", 500, 5000, "#glide.editvar.wheels" )
-
-    AddFloatVar( "SuspensionLength", 5, 50, "#glide.editvar.suspension" )
-    AddFloatVar( "SpringStrength", 100, 5000, "#glide.editvar.suspension" )
-    AddFloatVar( "SpringDamper", 100, 10000, "#glide.editvar.suspension" )
-
-    AddFloatVar( "ForwardTractionMax", 1000, 10000, "#glide.editvar.traction" )
-    AddFloatVar( "ForwardTractionBias", -1, 1, "#glide.editvar.traction" )
-
-    AddFloatVar( "SideTractionMultiplier", 5, 100, "#glide.editvar.traction" )
-    AddFloatVar( "SideTractionMaxAng", 5, 90, "#glide.editvar.traction" )
-    AddFloatVar( "SideTractionMax", 100, 5000, "#glide.editvar.traction" )
-    AddFloatVar( "SideTractionMin", 100, 5000, "#glide.editvar.traction" )
-
-    if SERVER then
-        -- Callback used to change the wheel radius
-        self:NetworkVarNotify( "WheelRadius", self.OnWheelRadiusChange )
-
-        -- Callback used to update the power distribution among wheels
-        self:NetworkVarNotify( "PowerDistribution", self.OnPowerDistributionChange )
-    end
+    self:SetOutOfControl( false )
+    self:SetIsEngineDying( false )
 
     if CLIENT then
-        -- Callback used to play gear change sounds
-        self:NetworkVarNotify( "Gear", self.OnGearChange )
+        -- Callback used to play out-of-control sounds clientside
+        self:NetworkVarNotify( "OutOfControl", self.OnOutOfControlChange )
     end
-end
-
---- Implement this base class function.
-function ENT:UpdatePlayerPoseParameters( ply )
-    ply:SetPlaybackRate( 1 )
-
-    if CLIENT and ply == self:GetDriver() then
-        ply:SetPoseParameter( "vehicle_steer", self:GetSteering() )
-        ply:InvalidateBoneCache()
-    end
-
-    return true
-end
-
---- Override this base class function.
-function ENT:IsReversing()
-    return self:GetGear() == -1
 end
 
 if CLIENT then
-    ENT.CameraOffset = Vector( -230, 0, 50 )
-    ENT.CameraAngleOffset = Angle( 4, 0, 0 )
 
-    -- Setup how far away players can hear sounds and update misc. features
-    ENT.MaxSoundDistance = 4000
-    ENT.MaxMiscDistance = 5000
+    -- Play this sound at startup
+    ENT.StartSound = "glide/helicopters/start_1.wav"
 
-    -- Sounds
-    ENT.StartSound = "Glide.Engine.CarStart"
-    ENT.StartTailSound = "Glide.Engine.CarStartTail"
-    ENT.ExhaustPopSound = "Glide.ExhaustPop.Sport"
-    ENT.StartedSound = ""
-    ENT.StoppedSound = "glide/engines/shut_down_1.wav"
+    -- Play this sound at the tail rotor
+    ENT.TailSoundPath = "glide/helicopters/tail_rotor_1.wav"
+    ENT.TailSoundLevel = 60
 
-    ENT.ExternalGearSwitchSound = "Glide.GearSwitch.External"
-    ENT.InternalGearSwitchSound = "Glide.GearSwitch.Internal"
-    ENT.HornSound = ")glide/horns/police_horn_1.wav"
+    -- Play this sound at the engine
+    ENT.EngineSoundPath = "glide/helicopters/howl_1.wav"
+    ENT.EngineSoundLevel = 75
+    ENT.EngineSoundVolume = 0.9
 
-    ENT.SirenLoopSound = ")glide/alarms/police_siren_3.wav"
-    ENT.SirenLoopAltSound = ")glide/horns/police_horn_2.wav"
-    ENT.SirenInterruptSound = "Glide.Wail.Interrupt"
-    ENT.SirenVolume = 0.8
+    -- Play this sound at the engine too
+    ENT.JetSoundPath = "glide/helicopters/jet_2.wav"
+    ENT.JetSoundLevel = 60
+    ENT.JetSoundVolume = 0.4
 
-    ENT.TurboLoopSound = "glide/engines/turbo_spin.wav"
-    ENT.TurboBlowoffSound = "glide/engines/turbo_blowoff.wav"
-    ENT.TurboVolume = 0.95
-    ENT.TurboBlowoffVolume = 0.3
-    ENT.TurboPitch = 100
+    -- Play this sound that can be heard from far away
+    ENT.DistantSoundPath = "glide/helicopters/distant_loop_2.wav"
 
-    ENT.ReverseSound = ""
-    ENT.BrakeReleaseSound = ""
-    ENT.BrakeSqueakSound = ""
+    -- Delay between each rotor "beat"
+    ENT.RotorBeatInterval = 0.08
 
-    ENT.BrakeLoopSound = ""
-    ENT.BrakeLoopVolume = 0.6
+    -- Rotor beat sound sets (See lua/glide/sh_soundsets.lua)
+    ENT.BassSoundSet = "Glide.GenericRotor.Bass"
+    ENT.MidSoundSet = "Glide.GenericRotor.Mid"
+    ENT.HighSoundSet = "Glide.GenericRotor.High"
 
-    -- Exhaust positions
-    ENT.ExhaustOffsets = {}
-    ENT.ExhaustAlpha = 50
+    ENT.BassSoundVol = 1.0
+    ENT.MidSoundVol = 0.4
+    ENT.HighSoundVol = 0.8
 
-    -- Strips/lines where smoke particles are spawned when the engine is damaged
-    ENT.EngineSmokeStrips = {}
-
-    -- How much does the engine smoke gets shot up?
-    ENT.EngineSmokeMaxZVel = 100
-
-    -- How long is the on/off cycle for sirens?
-    ENT.SirenCycle = 0.8
-
-    -- Offsets and timings for strobe lights.
-    -- This should contain a table of tables, where each looks like this:
-    --
-    -- { offset = Vector( 0, 0, 0 ), time = 0 }, -- Blinks at the start of the cycle
-    -- { offset = Vector( 0, 0, 0 ), time = 0.5, duration = 0.5 }, -- Blinks in the middle of the cycle, for half of the cycle's duration
-    -- { bodygroup = 123 = time = 0 } -- If given a `bodygroup` ID, toggle that too. You can also omit `offset` to not draw a sprite.
-    ENT.SirenLights = {}
-
-    -- Children classes should override this
-    -- function to add engine sounds to the stream.
-    function ENT:OnCreateEngineStream( _stream ) end
-
-    -- Children classes should override this function
-    -- to update animations (the steering wheel for example).
-    function ENT:OnUpdateAnimations()
-        self:SetPoseParameter( "vehicle_steer", self:GetSteering() )
-        self:InvalidateBoneCache()
-    end
+    -- Play this sound (to passengers only) when the engine is failing
+    ENT.EngineFailSound = "glide/ui/stall_beep.wav"
+    ENT.EngineFailVolume = 1.0
 end
 
 if SERVER then
-    ENT.CollisionParticleSize = 0.9
-    ENT.AngularDrag = Vector( -0.5, -0.5, -4 ) -- Roll, pitch, yaw
+    ENT.CollisionDamageMultiplier = 3
+    ENT.AngularDrag = Vector( -10, -18, -10 ) -- Roll, pitch, yaw
 
-    -- How long does it take for the vehicle to start up?
-    ENT.StartupTime = 0.6
+    -- How far can the rotor's blades hit things
+    ENT.MainRotorRadius = 210
+    ENT.TailRotorRadius = 10
 
-    -- How much force to apply when trying to turn while doing a burnout?
-    ENT.BurnoutForce = 25
+    -- Slow and fast models for the main rotor
+    ENT.MainRotorModel = "models/gta5/vehicles/frogger/frogger_rmain_slow.mdl"
+    ENT.MainRotorFastModel = "models/gta5/vehicles/frogger/frogger_rmain_fast.mdl" -- Can be "" to use the slow model
 
-    -- How much force to apply when the driver tries to unflip the vehicle?
-    ENT.UnflipForce = 6
+    -- Slow and fast models for the tail rotor
+    ENT.TailRotorModel = "models/gta5/vehicles/frogger/frogger_rrear_slow.mdl"
+    ENT.TailRotorFastModel = "models/gta5/vehicles/frogger/frogger_rrear_fast.mdl" -- Can be "" to use the slow model
 
-    -- How much force to apply when the driver tries to spin the airborne vehicle?
-    ENT.AirControlForce = Vector( 0.8, 0.3, 0.2 ) -- Roll, pitch, yaw
+    -- Helicopter drag & force constants.
+    -- On children classes, you don't have to override
+    -- the whole table, just the values you want to change.
+    ENT.HelicopterParams = {
+        -- Add this to the power used on OnSimulatePhysics.
+        -- Mostly used for things that float even while the engine is off.
+        basePower = 0,
 
-    -- How fast can the driver spin the vehicle while airborne?
-    ENT.AirMaxAngularVelocity = Vector( 150, 200, 150 ) -- Roll, pitch, yaw
+        drag = Vector( 0.3, 0.5, 0.5 ),     -- Forward, right, up
+        maxForwardDrag = 200,               -- Limit "forward" drag force
+        maxSideDrag = 300,                  -- Limit "right" drag force
 
-    --- Returns which inputs applies air control forces.
-    --- Should return a roll, pitch and yaw input.
-    function ENT:GetAirInputs()
-        return self:GetInputFloat( 1, "steer" ), self:GetInputFloat( 1, "lean_pitch" ), 0
-    end
+        turbulanceForce = 50,   -- Force to wobble the helicopter
+        pushUpForce = 250,      -- Up input force
+        pitchForce = 700,       -- Pitch input force
+        yawForce = 700,         -- Yaw input force
+        rollForce = 700,        -- Roll input force
 
-    --- Returns a list of available gears and gear ratios for this vehicle.
-    --- This has to be a function because children classes couldn't remove
-    --- existing keys if this list was defined on the ENT table.
-    function ENT:GetGears()
-        return {
-            [-1] = 2.5, -- Reverse
-            [0] = 0, -- Neutral (this number has no effect)
-            [1] = 2.8,
-            [2] = 1.7,
-            [3] = 1.2,
-            [4] = 0.9,
-            [5] = 0.75,
-            [6] = 0.7
-        }
-    end
+        pushForwardForce = 10,  -- Forward input force
+        maxSpeed = 2000,        -- `PushForwardForce` won't apply when going faster than this
 
-    --- Override this base class function.
-    function ENT:GetInputGroups( seatIndex )
-        return seatIndex > 1 and { "general_controls" } or { "general_controls", "land_controls" }
-    end
-
-    -- Save these network variables when using the duplicator
-    ENT.DuplicatorNetworkVariables = {
-        HeadlightColor = true,
-        TireSmokeColor = true,
-        WheelRadius = true,
-
-        MaxSteerAngle = true,
-        SteerConeChangeRate = true,
-        SteerConeMaxSpeed = true,
-        SteerConeMaxAngle = true,
-        CounterSteer = true,
-
-        BrakePower = true,
-        SuspensionLength = true,
-        SpringStrength = true,
-        SpringDamper = true,
-
-        ForwardTractionMax = true,
-        ForwardTractionBias = true,
-
-        SideTractionMultiplier = true,
-        SideTractionMaxAng = true,
-        SideTractionMin = true,
-        SideTractionMax = true,
-
-        MinRPM = true,
-        MaxRPM = true,
-        MinRPMTorque = true,
-        MaxRPMTorque = true,
-        DifferentialRatio = true,
-        TransmissionEfficiency = true,
-        PowerDistribution = true,
-
-        TurboCharged = true,
-        FastTransmission = true
+        uprightForce = 1000,    -- Force that tries to keep the helicopter upright
+        maxPitch = 70,          -- Don't let the helicopter pitch more than this
+        maxRoll = 85            -- Don't let the helicopter roll more than this
     }
+
+    -- You can override these functions on your children classes.
+    -- `selfTbl` is a more efficient way to access variables on the entity.
+
+    function ENT:ShouldAllowRotorSpin( selfTbl )
+        if selfTbl.MainRotorModel == "" then return true end
+        return IsValid( selfTbl.mainRotor )
+    end
+
+    function ENT:ShouldGoOutOfControl( selfTbl )
+        return not IsValid( selfTbl.tailRotor ) and selfTbl.TailRotorModel ~= ""
+    end
+
+    function ENT:HandleOutOfControl( power, dt )
+        local phys = self:GetPhysicsObject()
+        local force = self:GetRight() * power * phys:GetMass() * -100
+
+        phys:ApplyForceOffset( force * dt, self:LocalToWorld( self.TailRotorOffset ) )
+    end
+
+    function ENT:CreateRotors()
+        -- Create main rotor, if it doesn't exist
+        if not IsValid( self.mainRotor ) and self.MainRotorModel ~= "" then
+            self.mainRotor = self:CreateRotor( self.MainRotorOffset, self.MainRotorRadius, self.MainRotorModel, self.MainRotorFastModel )
+            self.mainRotor:SetBaseAngles( self.MainRotorAngle )
+        end
+
+        -- Create tail rotor, if it doesn't exist and we have a model for it
+        if not IsValid( self.tailRotor ) and self.TailRotorModel ~= "" then
+            self.tailRotor = self:CreateRotor( self.TailRotorOffset, self.TailRotorRadius, self.TailRotorModel, self.TailRotorFastModel )
+            self.tailRotor:SetBaseAngles( self.TailRotorAngle )
+            self.tailRotor:SetSpinAxis( "Right" )
+        end
+    end
 end
