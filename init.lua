@@ -1,817 +1,601 @@
-AddCSLuaFile( "shared.lua" )
 AddCSLuaFile( "cl_init.lua" )
-AddCSLuaFile( "cl_lights.lua" )
-AddCSLuaFile( "cl_hud.lua" )
-AddCSLuaFile( "cl_water.lua" )
-AddCSLuaFile( "sh_vehicle_compat.lua" )
+AddCSLuaFile( "shared.lua" )
 
 include( "shared.lua" )
-include( "sv_input.lua" )
-include( "sv_damage.lua" )
-include( "sv_weapons.lua" )
-include( "sv_wheels.lua" )
-include( "sv_lights.lua" )
-include( "sv_sockets.lua" )
-include( "sv_water.lua" )
-include( "sh_vehicle_compat.lua" )
 
-duplicator.RegisterEntityClass( "base_glide", Glide.VehicleFactory, "Data" )
+DEFINE_BASECLASS( "base_glide" )
 
-local EntityMeta = FindMetaTable( "Entity" )
-local getTable = EntityMeta.GetTable
+--- Implement this base class function.
+function ENT:OnPostInitialize()
+    -- Setup variables used on all aircraft
+    self.altitude = 0
+    self.powerResponse = 0.2
 
-local TriggerOutput = WireLib and WireLib.TriggerOutput or nil
+    self.inputPitch = 0
+    self.inputRoll = 0
+    self.inputYaw = 0
 
-function ENT:OnEntityCopyTableFinish( data )
-    Glide.FilterEntityCopyTable( data, self.DuplicatorNetworkVariables )
+    self.rotors = {}
+    self.areRotorsSpinningFast = false
 
-    -- Save radius for every individual wheel
-    local wheelRadius = {}
-    local wheelCount = 0
+    -- Setup damage variables
+    self.engineDamageCD = -1
+    self.engineDamageSoundCD = -1
 
-    for i, w in Glide.EntityPairs( self.wheels ) do
-        if IsValid( w ) then
-            wheelRadius[i] = w:GetRadius()
-            wheelCount = wheelCount + 1
-        end
-    end
+    -- Landing gear system
+    self.landingGearState = 0
+    self.landingGearExtend = 1
+    self.landingGearAnimLen = 0
 
-    if wheelCount > 0 then
-        data["WheelRadius"] = wheelRadius
-    end
-end
+    -- Countermeasure system
+    self.countermeasureCD = 0
 
-function ENT:OnDuplicated( data )
-    -- Restore radius for every individual wheel
-    local wheelRadius = data["WheelRadius"]
-    if type( wheelRadius ) ~= "table" then return end
-
-    local wheels = self.wheels
-    local w
-
-    for i, radius in pairs( wheelRadius ) do
-        w = wheels[i]
-
-        if IsValid( w ) and type( radius ) == "number" then
-            w:ChangeRadius( radius )
-        end
-    end
-end
-
-function ENT:PreEntityCopy()
-    Glide.PreEntityCopy( self )
-end
-
-function ENT:PostEntityPaste( ply, ent, createdEntities )
-    Glide.PostEntityPaste( ply, ent, createdEntities )
-end
-
---- Handle spawning this vehicle from the spawn menu or `gm_spawn` command.
-function ENT:SpawnFunction( ply, tr )
-    local pos = self.SpawnPositionOffset or Vector( 0, 0, 10 )
-    local ang = self.SpawnAngleOffset or Angle( 0, 90, 0 )
-
-    local ray = util.TraceLine( {
-        start = tr.StartPos,
-        endpos = tr.HitPos,
-        mask = MASK_WATER
-    } )
-
-    if ray.Hit and ray.HitWorld then
-        tr.HitPos = ray.HitPos
-    end
-
-    return Glide.VehicleFactory( ply, {
-        Pos = tr.HitPos + pos,
-        Angle = Angle( 0, ply:EyeAngles().y, 0 ) + ang,
-        Class = self.ClassName
-    } )
-end
-
-function ENT:OnReloaded()
-    self.lastBodygroups = {}
-
-    -- Setup water logic again
-    self:WaterInit()
-
-    -- Let children classes do their own logic
-    self:OnEntityReload()
-end
-
-function ENT:Initialize()
-    -- Setup variables used on all vehicle types.
-    self.seats = {}     -- Keep track of all seats we've created
-    self.exitPos = {}   -- Per-seat exit offsets
-    self.lastDriver = NULL
-    self.lastBodygroups = {}
-    
-	table.insert(hg.vehicles, self)
-
-    self.inputBools = {}        -- Per-seat bool inputs
-    self.inputFloats = {}       -- Per-seat float inputs
-    self.inputFlyMode = 0           -- User mouse flying mode
-    self.inputManualShift = false   -- User manual gear shifting setting
-    self.autoTurnOffLights = false  -- User "turn off headlights" setting
-    self.inputThrottleModifierMode = 0  -- User throttle modifier setting
-    self.inputThrottleModifierToggle = false
-
-    -- Setup collision variables
-    self.collisionShakeCooldown = 0
-
-    -- Setup speed variables
-    self.localVelocity = Vector()
-    self.forwardSpeed = 0
-    self.totalSpeed = 0
-    self.forwardAcceleration = 0
-
-    -- Setup trace filter used by systems that
-    -- need to ignore the vehicle's chassis and seats.
-    self.selfTraceFilter = { self }
-
-    -- Setup trace filter used by wheels to
-    -- to ignore the vehicle's chassis and seats.
-    self.wheelTraceFilter = { self, "player" }
-
-    -- Copy default surface multipliers to this vehicle.
-    self.surfaceGrip = table.Copy( Glide.SURFACE_GRIP )
-    self.surfaceResistance = table.Copy( Glide.SURFACE_RESISTANCE )
-
-    -- Setup the chassis model and physics
-    self:SetModel( self.ChassisModel )
-    self:InitializePhysics()
-    self:SetUseType( SIMPLE_USE )
-
-    local phys = self:GetPhysicsObject()
-
-    if not IsValid( phys ) then
-        self:Remove()
-        error( "Failed to setup physics! Vehicle removed!" )
-        return
-    end
-
-    phys:AddGameFlag( FVPHYSICS_NO_PLAYER_PICKUP )
-    phys:SetMaterial( "metalvehicle" )
-    phys:SetMass( self.ChassisMass * 1 )
-    phys:EnableDrag( false )
-    phys:SetDamping( 0, 0 )
-    phys:SetDragCoefficient( 0 )
-    phys:SetAngleDragCoefficient( 0 )
-    phys:SetBuoyancyRatio( 0.05 )
-    phys:EnableMotion( true )
-    phys:Wake()
-
-    self:StartMotionController()
-
-    -- Let NPCs see through this vehicle
-    self:AddEFlags( EFL_DONTBLOCKLOS )
-    self:AddFlags( FL_OBJECT )
-
-    -- Setup weapon system
-    self:WeaponInit()
-
-    -- Setup wheel system
-    self:WheelInit()
-
-    -- Setup the trailer attachment system
-    self:SocketInit()
-
-    -- Setup water-related logic
-    self:WaterInit()
-
-    -- Set default headlight color
-    local headlightColor = Glide.DEFAULT_HEADLIGHT_COLOR
-    self:SetHeadlightColor( Vector( headlightColor.r / 255, headlightColor.g / 255, headlightColor.b / 255 ) )
-
-    local data = { Color = self:GetSpawnColor() }
-
-    self:SetColor( data.Color )
-    duplicator.StoreEntityModifier( self, "colour", data )
-
-    -- Setup wiremod ports
+    -- Trigger wire outputs
     if WireLib then
-        local inputs, outputs = {}, {}
-
-        self:SetupWiremodPorts( inputs, outputs )
-
-        -- Separate input names, types and descriptions
-        local inNames, inTypes, inDescr = {}, {}, {}
-
-        for i, v in ipairs( inputs ) do
-            inNames[i] = v[1]
-            inTypes[i] = v[2]
-            inDescr[i] = v[3]
-        end
-
-        WireLib.CreateSpecialInputs( self, inNames, inTypes, inDescr )
-
-        -- Separate output names, types and descriptions
-        local outNames, outTypes, outDescr = {}, {}, {}
-
-        for i, v in ipairs( outputs ) do
-            outNames[i] = v[1]
-            outTypes[i] = v[2]
-            outDescr[i] = v[3]
-        end
-
-        WireLib.CreateSpecialOutputs( self, outNames, outTypes, outDescr )
-    end
-
-    -- Let child classes add their own features
-    self:OnPostInitialize()
-
-    -- Set health back to defaults
-    self:Repair()
-
-    -- Let child classes create things like seats, turrets, etc.
-    self:CreateFeatures()
-
-    -- Allow players to shoot fast-moving vehicles when their ping is high
-    self:SetLagCompensated( true )
-end
-
-function ENT:InitializePhysics()
-    self:SetSolid( SOLID_VPHYSICS )
-    self:SetMoveType( MOVETYPE_VPHYSICS )
-    self:PhysicsInit( SOLID_VPHYSICS )
-end
-
-function ENT:UpdateTransmitState()
-    return 2 -- TRANSMIT_PVS
-end
-
-function ENT:OnRemove()
-    self:ClearWeapons()
-end
-local hg_glide_only_closest_seat = CreateConVar("hg_glide_only_closest_seat","1",{FCVAR_ARCHIVE,FCVAR_NOTIFY},"Allows enter only on closest seat",0,1)
-function ENT:Use( activator )
-    if not IsValid( activator ) then return end
-    if not activator:IsPlayer() then return end
-    
-    if !hg_glide_only_closest_seat:GetBool() and not IsValid( self:GetDriver() ) and !activator:KeyDown(IN_WALK) then
-        local seat = self:GetFreeSeat()
-
-        if seat then
-            activator:SetAllowWeaponsInVehicle( false )
-            activator:EnterVehicle( seat )
-            return
-        end
-    end
-
-    local freeSeat = self:GetClosestAvailableSeat( activator:GetShootPos() )
-
-    if freeSeat then
-        activator:SetAllowWeaponsInVehicle( false )
-        activator:EnterVehicle( freeSeat )
+        WireLib.TriggerOutput( self, "Power", 0 )
+        WireLib.TriggerOutput( self, "Altitude", 0 )
+        WireLib.TriggerOutput( self, "WeaponCount", self.weaponCount )
     end
 end
 
-function ENT:OnEngineStateChange( _, lastState, state )
-    if lastState == 1 and state == 2 then
-        self:OnTurnOn()
+--- Override this base class function.
+function ENT:SetupWiremodPorts( inputs, outputs )
+    BaseClass.SetupWiremodPorts( self, inputs, outputs )
 
-    elseif state == 0 then
-        self:OnTurnOff()
-    end
+    inputs[#inputs + 1] = { "Ignition", "NORMAL", "1: Turn the engine on\n0: Turn the engine off" }
+    inputs[#inputs + 1] = { "Pitch", "NORMAL", "A value between -1.0 and 1.0", }
+    inputs[#inputs + 1] = { "Yaw", "NORMAL", "A value between -1.0 and 1.0", }
+    inputs[#inputs + 1] = { "Roll", "NORMAL", "A value between -1.0 and 1.0", }
+    inputs[#inputs + 1] = { "Throttle", "NORMAL", "A value between 0.0 and 1.0" }
+    inputs[#inputs + 1] = { "Fire", "NORMAL", "When greater than 0, fires the current weapon,\nif this helicopter has one" }
+    inputs[#inputs + 1] = { "WeaponIndex", "NORMAL", "If this vehicle has weapons, this will set which one to use.\nStarts at index 1. Check the 'WeaponCount' output to see the max. value." }
 
-    if WireLib then
-        WireLib.TriggerOutput( self, "EngineState", state )
-    end
+    outputs[#outputs + 1] = { "Power", "NORMAL", "Current engine power (between 0.0 and 2.0)" }
+    outputs[#outputs + 1] = { "Altitude", "NORMAL", "Current vehicle altitude" }
+    outputs[#outputs + 1] = { "WeaponCount", "NORMAL", "Number of weapon slots this vehicle has" }
 end
 
-function ENT:TurnOn()
-    local state = self:GetEngineState()
+--- Override this base class function.
+function ENT:Repair()
+    BaseClass.Repair( self )
 
-    if state == 3 then
-        self:SetEngineState( 2 )
+    -- Only repair and keep valid rotor entities
+    local validRotors = {}
+    local validCount = 0
 
-    elseif state ~= 2 then
-        self:SetEngineState( 1 )
+    for _, rotor in ipairs( self.rotors ) do
+        if IsValid( rotor ) then
+            rotor:Repair()
+
+            validCount = validCount + 1
+            validRotors[validCount] = rotor
+        end
     end
+
+    self.rotors = validRotors
 end
 
-function ENT:TurnOff()
-    self:SetEngineState( 3 )
+--- Override this base class function.
+function ENT:CreateWheel( offset, params )
+    -- Tweak default wheel params
+    params = params or {}
 
-    if self.autoTurnOffLights then
-        self:ChangeHeadlightState( 0, true )
-    end
-end
+    params.forwardTractionMax = params.forwardTractionMax or 50000
+    params.sideTractionMultiplier = params.sideTractionMultiplier or 200
+    params.brakePower = params.brakePower or 1000
 
-do
-    local data = {}
-
-    --- Utility function to setup trace data that
-    --- ignores the vehicle's chassis and seats.
-    function ENT:GetTraceData( startPos, endPos )
-        data.filter = self.selfTraceFilter
-        data.start = startPos
-        data.endpos = endPos
-
-        return data
-    end
-end
-
-do
-    local ragdollEnableCvar = GetConVar( "glide_ragdoll_enable" )
-    local maxRagdollTimeCvar = GetConVar( "glide_ragdoll_max_time" )
-
-    --- Kicks out all passengers, then ragdoll them.
-    function ENT:RagdollPlayers( time, vel )
-        if not ragdollEnableCvar:GetBool() then return end
-        time = time or maxRagdollTimeCvar:GetFloat()
-        vel = vel or self:GetVelocity()
-
-        local ply
-
-        for seatIndex, seat in Glide.EntityPairs( self.seats ) do
-            ply = seat:GetDriver()
-
-            if IsValid( ply ) and self:CanFallOnCollision( seatIndex ) then
-                Glide.RagdollPlayer( ply, vel, time )
-            end
-        end
-
-        self.hasRagdolledAllPlayers = true
-    end
-end
-
---- Makes so only the vehicle creator and prop
---- protection buddies can enter this vehicle.
-function ENT:SetLocked( isLocked, doNotNotify )
-    self:SetIsLocked( isLocked )
-
-    if doNotNotify then return end
-
-    Glide.SendNotification( self:GetAllPlayers(), {
-        text = "#glide.notify." .. ( isLocked and "vehicle_locked" or "vehicle_unlocked" ),
-        icon = "materials/glide/icons/" .. ( isLocked and "locked" or "unlocked" ) .. ".png",
-        sound = isLocked and "doors/latchlocked2.wav" or "doors/latchunlocked1.wav",
-        immediate = true
-    } )
-end
-
-local IsValid = IsValid
-
-do
-    local GetDevMode = Glide.GetDevMode
-    local TraceLine = util.TraceLine
-    local TraceHull = util.TraceHull
-
-    local ray = {}
-    local traceData = {
-        mins = Vector( -20, -20, 0 ),
-        maxs = Vector( 20, 20, 50 ),
-        output = ray, -- Output TraceResult to this table
-        mask = MASK_NPCSOLID - MASK_WATER -- Ignore water
-    }
-
-    local function ValidateExitPos( vehicle, origin, localPos )
-        local exitPos = vehicle:LocalToWorld( localPos )
-
-        -- First, make sure there's nothing in between the vehicle's seat and `exitPos`
-        traceData.start = origin
-        traceData.endpos = exitPos
-
-        TraceLine( traceData )
-
-        if ray.Hit then
-            if GetDevMode() then
-                debugoverlay.Line( origin, traceData.endpos, 8, Color( 255, 0, 0 ), true )
-                debugoverlay.EntityTextAtPosition( traceData.endpos, 0, "<exit blocked>", 8, Color( 255, 0, 0 ) )
-            end
-
-            return true, exitPos
-        end
-
-        -- Second, make sure the player's hitbox can fit on the `exitPos`
-        traceData.start = exitPos
-        traceData.endpos = exitPos
-
-        TraceHull( traceData )
-
-        if ray.StartSolid then
-            if GetDevMode() then
-                debugoverlay.Line( origin, traceData.endpos, 8, Color( 255, 100, 0 ), true )
-                debugoverlay.EntityTextAtPosition( traceData.endpos, 0, "<exit is too small>", 8, Color( 255, 100, 0 ) )
-            end
-
-            return true, exitPos
-        end
-
-        if GetDevMode() then
-            debugoverlay.Line( origin, exitPos, 8, Color( 0, 255, 0 ), true )
-            debugoverlay.Box( exitPos, traceData.mins, traceData.maxs, 8, Color( 255, 255, 255, 20 ) )
-        end
-
-        return false, exitPos
+    if params.enableAxleForces == nil then
+        params.enableAxleForces = true
     end
 
-    --- Gets the exit position from a seat index.
-    function ENT:GetSeatExitPos( index )
-        local seat = self.seats[index]
+    -- Let the base class create the wheel
+    local wheel = BaseClass.CreateWheel( self, offset, params )
 
-        if not IsValid( seat ) then
-            return self:GetPos() -- Not much we can do here...
-        end
+    -- Apply a bit of brake by default
+    wheel.state.brake = 0.5
 
-        traceData.filter = {}
-
-        -- Ignore everything that is parented to this vehicle
-        for i, ent in ipairs( self:GetChildren() ) do
-            traceData.filter[i] = ent
-        end
-
-        -- Ignore the vehicle itself and players
-        traceData.filter[#traceData.filter + 1] = self
-        traceData.filter[#traceData.filter + 1] = "player"
-
-        -- Try the original exit position first
-        local origin = self:LocalToWorld( self:OBBCenter() )
-        local blocked, pos = ValidateExitPos( self, origin, seat.GlideExitPos )
-
-        if blocked then
-            -- Try on the other side
-            blocked, pos = ValidateExitPos( self, origin, Vector( seat.GlideExitPos[1], -seat.GlideExitPos[2], seat.GlideExitPos[3] ) )
-        end
-
-        if blocked then
-            -- Well, let's just try a bunch of positions then
-            local obbSize = self:OBBMaxs() - self:OBBMins()
-
-            obbSize[1] = obbSize[1] < 150 and 150 or obbSize[1]
-            obbSize[2] = obbSize[2] < 100 and 100 or obbSize[2]
-
-            local offset = Vector()
-            local rad
-
-            for ang = 0, 360, 15 do
-                rad = math.rad( ang )
-                offset[1] = math.sin( rad ) * obbSize[1] * 0.75
-                offset[2] = math.cos( rad ) * obbSize[2] * 0.75
-
-                blocked, pos = ValidateExitPos( self, origin, offset )
-
-                if not blocked then
-                    break
-                end
-            end
-        end
-
-        if blocked then
-            -- We're cooked...
-            pos = seat:GetPos()
-        else
-            -- Put the exit position on the ground
-            traceData.start = pos
-            traceData.endpos = Vector( pos[1], pos[2], pos[3] - 100 )
-
-            TraceHull( traceData )
-
-            if ray.Hit then
-                pos = ray.HitPos
-                pos[3] = pos[3] + 5
-            end
-        end
-
-        if GetDevMode() then
-            debugoverlay.EntityTextAtPosition( pos, 0, "<final exit pos>", 8, Color( blocked and 255 or 0, 255, 0 ) )
-            debugoverlay.Box( pos, traceData.mins, traceData.maxs, 8, Color( blocked and 255 or 0, 255, 0, 30 ) )
-        end
-
-        return pos
-    end
+    return wheel
 end
 
 local EntityPairs = Glide.EntityPairs
 
---- Returns how many players are inside of this vehicle.
-function ENT:GetPlayerCount()
-    local count = 0
-
-    for _, seat in EntityPairs( self.seats ) do
-        if IsValid( seat ) and IsValid( seat:GetDriver() ) then
-            count = count + 1
-        end
+function ENT:ChangeSuspensionLengthMultiplier( multiplier )
+    for _, w in EntityPairs( self.wheels ) do
+        w.state.suspensionLengthMult = multiplier
     end
-
-    return count
-end
-
---- Returns all players that are inside of this vehicle.
-function ENT:GetAllPlayers()
-    local players = {}
-    local driver
-
-    for _, seat in EntityPairs( self.seats ) do
-        if IsValid( seat ) then
-            driver = seat:GetDriver()
-
-            if IsValid( driver ) then
-                players[#players + 1] = driver
-            end
-        end
-    end
-
-    return players
-end
-
---- Gets the driver from a seat index.
-function ENT:GetSeatDriver( index )
-    local seat = self.seats[index]
-
-    if IsValid( seat ) then
-        return seat:GetDriver()
-    end
-end
-
---- Gets the first free seat entity, or returns `nil` if none are available.
-function ENT:GetFreeSeat()
-    for i, seat in EntityPairs( self.seats ) do
-        if not IsValid( seat:GetDriver() ) then
-            return seat, i
-        end
-    end
-end
-
---- Gets the closest available seat to a position.
-function ENT:GetClosestAvailableSeat( pos )
-    local closestSeat = nil
-    local closestDistance = math.huge
-
-    for _, seat in EntityPairs( self.seats ) do
-        local distance = pos:DistToSqr( seat:GetPos() )
-
-        if distance < closestDistance and not IsValid( seat:GetDriver() ) then
-            closestSeat = seat
-            closestDistance = distance
-        end
-    end
-
-    return closestSeat
-end
-
---- Create a new seat.
----
---- `offset` is the seat's position relative to the chassis.
---- `angle` is the seat's angles relative to the chassis.
---- Set `isHidden` to `true` to disable drawing this seat.
-function ENT:CreateSeat( offset, angle, exitPos, isHidden )
-    local index = #self.seats + 1
-
-    if index > Glide.MAX_SEATS then
-        error( "Seat limit reached!" )
-
-        return
-    end
-
-    local seat = ents.Create( "prop_vehicle_prisoner_pod" )
-
-    if not IsValid( seat ) then
-        self:Remove()
-        error( "Failed to spawn a seat! Vehicle removed!" )
-
-        return
-    end
-
-    seat:SetModel( "models/nova/airboat_seat.mdl" )
-    seat:SetPos( self:LocalToWorld( offset or Vector() ) )
-    seat:SetAngles( self:LocalToWorldAngles( angle or Angle( 0, 270, 10 ) ) )
-    seat:SetMoveType( MOVETYPE_NONE )
-    seat:SetOwner( self )
-    seat:Spawn()
-    seat:Activate()
-
-    Glide.CopyEntityCreator( self, seat )
-
-    seat:SetKeyValue( "limitview", 0 )
-    seat:SetNotSolid( true )
-    seat:SetParent( self )
-    seat:DrawShadow( false )
-    seat:PhysicsDestroy()
-
-    seat.PhysgunDisabled = true
-    seat.DoNotDuplicate = true
-    seat.DisableDuplicator = true
-
-    if isHidden then
-        Glide.HideEntity( seat, true )
-    end
-
-    -- Let Glide know it should handle this seat differently
-    seat.GlideSeatIndex = index
-    seat.GlideExitPos = exitPos
-    self:DeleteOnRemove( seat )
-
-    self.seats[index] = seat
-
-    -- Setup player inputs for this seat
-    self.inputBools[index] = {}
-    self.inputFloats[index] = {}
-
-    -- Don't let our traces hit this seat
-    self.selfTraceFilter[#self.selfTraceFilter + 1] = seat
-    self.wheelTraceFilter[#self.wheelTraceFilter + 1] = seat
-
-    -- Update seat wire outputs
-    if TriggerOutput then
-        if index == 1 then
-            TriggerOutput( self, "DriverSeat", seat )
-        else
-            local passengerSeats = {}
-
-            for i = 2, #self.seats do
-                passengerSeats[i - 1] = self.seats[i]
-            end
-
-            TriggerOutput( self, "PassengerSeats", passengerSeats )
-        end
-    end
-
-    return seat
-end
-
-local CurTime = CurTime
-local TickInterval = engine.TickInterval
-local GetDevMode = Glide.GetDevMode
-
-function ENT:Think()
-    local dt = TickInterval()
-    local selfTbl = getTable( self )
-
-    -- Run again next tick
-    local time = CurTime()
-    self:NextThink( time )
-
-    -- Update speed variables
-    selfTbl.localVelocity = self:WorldToLocal( self:GetPos() + self:GetVelocity() )
-    selfTbl.totalSpeed = selfTbl.localVelocity:Length()
-
-    local forwardSpeed = selfTbl.localVelocity[1]
-
-    selfTbl.forwardAcceleration = ( forwardSpeed - selfTbl.forwardSpeed ) / dt
-    selfTbl.forwardSpeed = forwardSpeed
-
-    -- If we have at least one seat...
-    if #selfTbl.seats > 0 then
-        -- Use it to check if we have a driver
-        local driverSeat = selfTbl.seats[1]
-        local driver = IsValid( driverSeat ) and driverSeat:GetDriver() or NULL
-
-        if driver ~= self:GetDriver() then
-            self:SetDriver( driver )
-            self:ClearLockOnTarget()
-
-            if IsValid( driver ) then
-                if TriggerOutput then
-                    TriggerOutput( self, "Active", 1 )
-                    TriggerOutput( self, "Driver", driver )
-                end
-
-                self:OnDriverEnter()
-                selfTbl.lastDriver = driver
-            else
-                if TriggerOutput then
-                    TriggerOutput( self, "Active", 0 )
-                    TriggerOutput( self, "Driver", NULL )
-                end
-
-                self:OnDriverExit()
-            end
-
-            selfTbl.hasRagdolledAllPlayers = nil
-        end
-    end
-
-    -- Update weapons
-    if selfTbl.weaponCount > 0 then
-        self:WeaponThink()
-    end
-
-    -- Update water logic
-    self:WaterThink( selfTbl )
-
-    -- Deal engine fire damage over time
-    if self:GetIsEngineOnFire() then
-        if self:WaterLevel() > 2 then
-            self:SetIsEngineOnFire( false )
-        else
-            local attacker = IsValid( self.lastDamageAttacker ) and self.lastDamageAttacker or self
-            local inflictor = IsValid( self.lastDamageInflictor ) and self.lastDamageInflictor or self
-
-            local dmg = DamageInfo()
-            dmg:SetDamage( self.MaxChassisHealth * self.ChassisFireDamageMultiplier * dt )
-            dmg:SetAttacker( attacker )
-            dmg:SetInflictor( inflictor )
-            dmg:SetDamageType( 0 )
-            dmg:SetDamageForce( Vector() )
-            dmg:SetDamagePosition( self:GetPos() )
-            self:TakeDamageInfo( dmg )
-        end
-    end
-
-    -- Update wheels
-    if selfTbl.wheelCount > 0 then
-        self:WheelThink( dt )
-    end
-
-    -- Update trailer sockets
-    if selfTbl.socketCount > 0 then
-        self:SocketThink( dt, time )
-    end
-
-    -- Update bodygroups
-    self:UpdateLightBodygroups()
-
-    -- Let children classes do their own stuff
-    self:OnPostThink( dt, selfTbl )
-
-    -- Let children classes update their features
-    self:OnUpdateFeatures( dt )
 
     local phys = self:GetPhysicsObject()
 
     if IsValid( phys ) then
-        self:ValidatePhysSettings( phys )
-    end
-
-    -- Draw debug overlays, if `developer` cvar is active
-    if GetDevMode() then
-        debugoverlay.Axis( self:LocalToWorld( phys:GetMassCenter() ), self:GetAngles(), 15, 0.1, true )
-    end
-
-    return true
-end
-
-local Abs = math.abs
-
---- Make sure nothing messed with
---- our physics damping and buoyancy values.
-function ENT:ValidatePhysSettings( phys )
-    phys:SetBuoyancyRatio( 0.02 )
-
-    local lin, ang = phys:GetDamping()
-
-    if lin > 0 or ang > 0 then
-        phys:SetDamping( 0, 0 )
-    end
-
-    -- Make sure the physics stay awake when necessary,
-    -- otherwise the driver's input won't do anything.
-    local driverInput =
-        self:GetInputFloat( 1, "accelerate" ) +
-        self:GetInputFloat( 1, "brake" ) +
-        self:GetInputFloat( 1, "steer" ) +
-        self:GetInputFloat( 1, "throttle" )
-
-    if phys:IsAsleep() and Abs( driverInput ) > 0.01 then
         phys:Wake()
     end
 end
 
-function ENT:UpdateHealthOutputs()
-    if not TriggerOutput then return end
+function ENT:SetLandingGearState( state )
+    self.landingGearState = state
 
-    TriggerOutput( self, "MaxChassisHealth", self.MaxChassisHealth )
-    TriggerOutput( self, "ChassisHealth", self:GetChassisHealth() )
-    TriggerOutput( self, "EngineHealth", self:GetEngineHealth() )
+    local anim = self.LandingGearAnims[state]
+
+    if anim then
+        self:ResetSequenceInfo()
+        self:ResetSequence( anim )
+        self.landingGearAnimLen = math.max( 0.1, self:SequenceDuration() )
+    end
+
+    if state == 1 then
+        -- Move the gear up
+        self.landingGearExtend = 1
+        self.wheelsEnabled = true
+
+    elseif state == 2 then
+        -- Set the gear up now
+        self.landingGearExtend = 0
+        self.wheelsEnabled = false
+        self:ChangeSuspensionLengthMultiplier( 0 )
+
+    elseif state == 3 then
+        -- Move the gear down
+        self.landingGearExtend = 0
+        self.wheelsEnabled = true
+
+    else
+        -- Set the gear down now
+        self.landingGearExtend = 1
+        self.wheelsEnabled = true
+        self:ChangeSuspensionLengthMultiplier( 1 )
+    end
+
+    local soundParams = self.LandingGearSounds[state]
+
+    if soundParams[1] ~= "" then
+        self:EmitSound( soundParams[1], 90, soundParams[3], soundParams[2] )
+    end
+
+    self:OnLandingGearStateChange( state )
 end
 
-function ENT:TriggerInput( name, value )
-    if name == "EjectDriver" and value > 0 then
-        local seat = self.seats[1]
+function ENT:LandingGearThink( dt )
+    local state = self.landingGearState
 
-        if IsValid( seat ) then
-            local driver = seat:GetDriver()
+    if state == 1 then -- Is it moving up?
+        self.landingGearExtend = self.landingGearExtend - dt / self.landingGearAnimLen
+        self:ChangeSuspensionLengthMultiplier( self.landingGearExtend )
 
-            if IsValid( driver ) then
-                driver:ExitVehicle()
-            end
+        if self.landingGearExtend < 0 then
+            self:SetLandingGearState( 2 ) -- Set fully up
+            return
         end
 
-    elseif name == "LockVehicle" then
-        self:SetLocked( value > 0, true )
+    elseif state == 3 then -- Is it moving down?
+        self.landingGearExtend = self.landingGearExtend + dt / self.landingGearAnimLen
+        self:ChangeSuspensionLengthMultiplier( self.landingGearExtend )
 
-    elseif name == "Headlights" then
-        self:ChangeHeadlightState( value, true )
-
-    elseif name == "TurnSignal" then
-        self:ChangeTurnSignalState( value, true )
+        if self.landingGearExtend > 1 then
+            self:SetLandingGearState( 0 ) -- Set fully down
+            return
+        end
     end
 end
 
-local colors = {
-    Color( 180, 70, 70 ),
-    Color( 80, 65, 50 ),
-    Color( 162, 188, 243 ),
-    Color( 214, 106, 53 ),
-    Color( 45, 45, 45 ),
-    Color( 20, 20, 20 ),
-    Color( 100, 100, 100 ),
-    Color( 190, 190, 190 ),
-    Color( 255, 255, 255 )
-}
+function ENT:FireCountermeasures()
+    local count = self.CountermeasureCount
 
-function ENT:GetSpawnColor()
-    local color = colors[math.random( #colors )]
-    return Color( color.r, color.g, color.b )
+    if count < 1 then
+        local driver = self:GetDriver()
+        if not IsValid( driver ) then return end
+
+        Glide.SendNotification( driver, {
+            text = "#glide.countermeasures_not_available",
+            icon = "materials/icon16/cancel.png"
+        } )
+
+        return
+    end
+
+    local t = CurTime()
+
+    if t < self.countermeasureCD then
+        self:EmitSound( "glide/weapons/flare_reloading.wav", 85, 100, 1.0, 6, 0, 0 )
+        return
+    end
+
+    self.countermeasureCD = t + self.CountermeasureCooldown
+    Glide.PlaySoundSet( "Glide.FlareLaunch", self, 1.0 )
+
+    local mins = self:OBBMins()
+    local startPos = self:LocalToWorld( Vector( 0, 0, mins[3] * 0.5 ) )
+
+    local cone = 60
+    local step = cone / count
+    local ang = Angle( 0, 180 - ( step * 0.5 ) - ( cone * 0.5 ), 0 )
+    local vel = self:GetVelocity()
+
+    for _ = 1, count do
+        ang[2] = ang[2] + step
+
+        local flare = ents.Create( "glide_flare" )
+        flare:SetPos( startPos )
+        flare:SetAngles( self:LocalToWorldAngles( ang ) )
+        flare:SetOwner( self )
+        flare:Spawn()
+
+        local phys = flare:GetPhysicsObject()
+
+        if IsValid( phys ) then
+            phys:SetVelocityInstantaneous( vel + flare:GetForward() * 1000 )
+        end
+    end
+end
+
+--- Implement this base class function.
+function ENT:OnSeatInput( seatIndex, action, pressed )
+    if not pressed or seatIndex > 1 then return end
+
+    -- Toggle landing gear
+    if action == "landing_gear" and self.HasLandingGear and seatIndex < 2 then
+        local state = self.landingGearState
+
+        if state == 0 then -- Is it down?
+            self:SetLandingGearState( 1 ) -- Move up
+
+        elseif state == 2 then -- Is it up?
+            self:SetLandingGearState( 3 ) -- Move down
+        end
+
+        return true
+    end
+
+    if action == "countermeasures" then
+        self:FireCountermeasures()
+        return true
+    end
+end
+
+--- Implement this base class function.
+function ENT:OnPostThink( dt, selfTbl )
+    -- Find the altitude
+    self:UpdateAltitude()
+
+    -- Update landing gear
+    if selfTbl.HasLandingGear then
+        self:LandingGearThink( dt )
+    end
+
+    -- Update rotors
+    self:RotorsThink()
+end
+
+local IsValid = IsValid
+
+function ENT:RotorsThink()
+    local power = self:GetPower()
+
+    -- Spin the rotors
+    for _, rotor in ipairs( self.rotors ) do
+        if IsValid( rotor ) then
+            rotor.spinMultiplier = power
+        end
+    end
+
+    -- Call `RotorStartSpinningFast` or `RotorStopSpinningFast`
+    -- when the result from `ShouldRotorsSpinFast` changes.
+    local areRotorsSpinningFast = self:ShouldRotorsSpinFast()
+
+    if self.areRotorsSpinningFast ~= areRotorsSpinningFast then
+        self.areRotorsSpinningFast = areRotorsSpinningFast
+
+        for _, rotor in ipairs( self.rotors ) do
+            if IsValid( rotor ) then
+                if areRotorsSpinningFast then
+                    self:RotorStartSpinningFast( rotor )
+                else
+                    self:RotorStopSpinningFast( rotor )
+                end
+            end
+        end
+    end
+end
+
+do
+    local RandomInt = math.random
+    local PlaySoundSet = Glide.PlaySoundSet
+
+    --- Process damage-over-time effects.
+    function ENT:DamageThink( dt )
+        local health = self:GetEngineHealth()
+        if health > 0.5 then return end
+
+        local power = self:GetPower()
+
+        -- Emit random gear grinding noises at low health
+        if health < 0.4 and power > 0.1 then
+            self.engineDamageSoundCD = self.engineDamageSoundCD - dt
+
+            if self.engineDamageSoundCD < 0 then
+                self.engineDamageSoundCD = RandomInt( 1, 5 )
+                PlaySoundSet( self.DamagedEngineSound, self, self.DamagedEngineVolume - health )
+            end
+        end
+
+        -- Periodically lower the engine health once below a threshold
+        self.engineDamageCD = self.engineDamageCD - dt
+        if self.engineDamageCD > 0 then return end
+
+        self.engineDamageCD = RandomInt( 20, 25 )
+        self:TakeEngineDamage( 0.04 )
+
+        health = self:GetEngineHealth()
+
+        if health > 0 then
+            self:SetPower( power * ( health < 0.05 and 0.2 or ( health > 0.15 and 0.45 or 0.3 ) ) )
+            PlaySoundSet( "Glide.Damaged.AircraftEngine", self, 1 - health )
+        end
+    end
+end
+
+--[[
+    This file contains functions to simulate planes and helicopters.
+
+    Instead of being on separate children classes, they are here
+    to allow hybrid vehicles, such as VTOL aircraft.
+
+    ATTENTION: These use some variables/functions that are not
+    available on this base class. Check their descriptions for a list.
+]]
+
+local WORLD_UP = Vector( 0, 0, 1 )
+local TraceLine = util.TraceLine
+local TriggerOutput = WireLib and WireLib.TriggerOutput or nil
+
+function ENT:UpdateAltitude()
+    local mins = self:OBBMins()
+    mins[1] = 0
+    mins[2] = 0
+
+    local traceStart = self:GetPos() + mins * 0.9
+    local tr = TraceLine( self:GetTraceData( traceStart, traceStart - WORLD_UP * 10000 ) )
+
+    self.altitude = tr.Hit and tr.Fraction * 10000 or 10000
+
+    if TriggerOutput then
+        TriggerOutput( self, "Altitude", self.altitude )
+    end
+end
+
+local Cos = math.cos
+local Abs = math.abs
+local Clamp = math.Clamp
+
+local CurTime = CurTime
+local GetGravity = physenv.GetGravity
+
+local mass, up, fw, rt
+local vel, localVel, effectiveness
+
+local function AddForce( out, f )
+    out[1] = out[1] + f[1] * mass * effectiveness
+    out[2] = out[2] + f[2] * mass * effectiveness
+    out[3] = out[3] + f[3] * mass * effectiveness
+end
+
+local function LimitInputWithAngle( value, ang, maxAng )
+    if ang > maxAng then
+        value = value * ( 1 - Clamp( ( ang - maxAng ) / 20, 0, 1 ) )
+    end
+
+    return value
+end
+
+--- Simulate helicopter physics.
+--- Uses these extra ENT functions and variables:
+---
+--- > boolean = self:GetOutOfControl()
+---
+function ENT:SimulateHelicopter( phys, params, effective, outLin, outAng )
+    effectiveness = effective
+    mass = phys:GetMass()
+
+    up = self:GetUp()
+    fw = self:GetForward()
+    rt = self:GetRight()
+
+    vel = phys:GetVelocity()
+    localVel = self:WorldToLocal( phys:GetPos() + vel )
+
+    -- Drag
+    AddForce( outLin,
+        ( -fw * Clamp( localVel[1], -params.maxForwardDrag, params.maxForwardDrag ) * params.drag[1] ) +
+        ( rt * Clamp( localVel[2], -params.maxSideDrag, params.maxSideDrag ) * params.drag[2] ) +
+        ( -up * localVel[3] * params.drag[3] )
+    )
+
+    -- Lift & keep upright forces
+    local align = up:Dot( WORLD_UP )
+    local gravity = -GetGravity()[3]
+    local inputMult = self:IsEngineOn() and 1 or 0
+
+    AddForce( outLin, gravity * up )
+    AddForce( outLin, gravity * ( 0.75 - Clamp( Abs( align ), 0, 0.75 ) ) * WORLD_UP )
+    AddForce( outLin, params.pushUpForce * self:GetInputFloat( 1, "throttle" ) * inputMult * up )
+
+    -- Input control forces
+    local angles = self:GetAngles()
+    local inputPitch = LimitInputWithAngle( self.inputPitch, Abs( angles[1] ), params.maxPitch - 20 )
+    local inputRoll = LimitInputWithAngle( self.inputRoll, Abs( angles[3] ), params.maxRoll - 20 )
+
+    outAng[1] = outAng[1] + inputRoll * params.rollForce * inputMult * effectiveness * mass
+    outAng[2] = outAng[2] + inputPitch * params.pitchForce * inputMult * effectiveness * mass
+    outAng[3] = outAng[3] - self.inputYaw * params.yawForce * inputMult * effectiveness * mass
+
+    -- Keep upright force
+    outAng[1] = outAng[1] + rt:Dot( WORLD_UP ) * params.uprightForce * ( 1 - Abs( inputPitch ) ) * effectiveness * mass
+    outAng[2] = outAng[2] + fw:Dot( WORLD_UP ) * params.uprightForce * ( 1 - Abs( inputRoll ) ) * effectiveness * mass
+
+    -- Forward input force & speed limit
+    local speed = localVel[1]
+
+    if speed < params.maxSpeed and speed > -params.maxSpeed then
+        AddForce( outLin, self.inputPitch * params.pushForwardForce * fw )
+    end
+
+    -- Stick to the ground
+    if self.altitude < 25 and self:GetInputFloat( 1, "throttle" ) < 0.1 then
+        AddForce( outLin, WORLD_UP * -200 )
+    else
+        -- Turbulance
+        local t = CurTime()
+        outAng[1] = outAng[1] + Cos( t * 2 ) * params.turbulanceForce * mass
+        outAng[2] = outAng[2] + Cos( t * 1.5 ) * params.turbulanceForce * 0.5 * mass
+    end
+end
+
+local Pow = math.pow
+local Min = math.Min
+local Remap = math.Remap
+
+local power, speed
+
+--- Simulate plane physics.
+--- Uses these extra ENT functions and variables:
+---
+--- > number = self:GetPower()
+--- > boolean = self.isGrounded
+---
+function ENT:SimulatePlane( phys, dt, params, effective, outLin, outAng )
+    effectiveness = effective
+    power = self:GetPower()
+    mass = phys:GetMass()
+
+    fw = self:GetForward()
+    rt = self:GetRight()
+    up = self:GetUp()
+
+    vel = phys:GetVelocity()
+    localVel = self:WorldToLocal( phys:GetPos() + vel )
+    speed = localVel[1]
+
+    local lift = Clamp( Abs( speed ) / params.liftSpeed, 0, 1 )
+
+    lift = Pow( lift, 2 )
+
+    -- Drag forces
+    AddForce( outLin, -fw * Clamp( speed, -500, 500 ) * params.liftForwardDrag * lift )
+    AddForce( outLin, rt * localVel[2] * params.liftSideDrag * lift )
+
+    local drag = params.liftAngularDrag
+    local angVel = phys:GetAngleVelocity()
+
+    outAng[1] = outAng[1] + angVel[1] * drag[1] * mass * lift * effective
+    outAng[2] = outAng[2] + angVel[2] * drag[2] * mass * lift * effective
+    outAng[3] = outAng[3] + angVel[3] * drag[3] * mass * lift * effective
+
+    -- Lift force
+    AddForce( outLin, ( -localVel[3] * lift * params.liftFactor * up ) / dt )
+
+    -- Try to align the plane towards the direction of movement
+    vel:Normalize()
+
+    outAng[2] = outAng[2] - vel:Dot( up ) * params.alignForce * mass * effective
+    outAng[3] = outAng[3] - vel:Dot( rt ) * params.alignForce * mass * effective
+
+    -- Slight yaw force when rolling left/right
+    outAng[3] = outAng[3] + WORLD_UP:Dot( rt ) * params.yawForce * mass * 0.2
+
+    -- Forward speed limit
+    local controllability = 1
+    local maxSpeed = Remap( power, 0, 2, params.liftSpeed, params.maxSpeed )
+
+    if speed > maxSpeed then
+        controllability = 1 + Clamp( 1 - ( speed / maxSpeed ), -1, 0 ) * 0.75
+
+        if speed > maxSpeed * 1.2 then
+            AddForce( outLin, params.engineForce * -2 * fw )
+        end
+    end
+
+    -- Engine force
+    local throttleInput = self:GetInputFloat( 1, "throttle" )
+
+    -- Keep the plane going while off ground without any input
+    if not self.isGrounded and Abs( throttleInput ) < 0.1 then
+        throttleInput = Min( power, 1 )
+    end
+
+    if throttleInput > 0 and speed < maxSpeed then
+        -- Forward acceleration
+        AddForce( outLin, fw * params.engineForce * power * throttleInput )
+
+    elseif throttleInput < 0 and speed > params.liftSpeed * 0.8 then
+        -- Forward deceleration
+        AddForce( outLin, fw * params.engineForce * Min( power, 1 ) * throttleInput )
+    end
+
+    controllability = controllability * Clamp( Abs( speed * 0.5 ) / params.controlSpeed, 0, 1 )
+
+    -- Rotate input forces
+    outAng[1] = outAng[1] + self.inputRoll * params.rollForce * mass * controllability * effective
+    outAng[2] = outAng[2] + self.inputPitch * params.pitchForce * mass * controllability * effective
+    outAng[3] = outAng[3] - self.inputYaw * params.yawForce * mass * controllability * effective
+end
+
+do
+    local function VectorProjectOntoPlane( vector, planeNormal )
+        return vector - vector:Dot( planeNormal ) * planeNormal
+    end
+
+    function ENT:PhysicsCollide( data )
+        BaseClass.PhysicsCollide( self, data )
+        
+        if data.TheirSurfaceProps ~= 76 then -- default_silent
+            return
+        end
+
+        local phys = self:GetPhysicsObject()
+        if not IsValid( phys ) then return end
+
+        -- Bounce away from the skybox
+        local normal = data.HitNormal
+        local newVel = VectorProjectOntoPlane( data.OurOldVelocity, normal ) - normal * 250
+
+        phys:SetVelocityInstantaneous( newVel )
+        phys:SetAngleVelocityInstantaneous( data.OurOldAngularVelocity )
+    end
+end
+
+--- Override this base class function.
+function ENT:TriggerInput( name, value )
+    BaseClass.TriggerInput( self, name, value )
+
+    if name == "Ignition" then
+        local isOn = value > 0
+
+        -- Avoid continuous triggers
+        if self.wireIsOn ~= isOn then
+            self.wireIsOn = isOn
+
+            if isOn then
+                self:TurnOn()
+            else
+                self:TurnOff()
+            end
+        end
+
+    elseif name == "Pitch" then
+        self:SetInputFloat( 1, "pitch", Clamp( value, -1, 1 ) )
+
+    elseif name == "Yaw" then
+        self:SetInputFloat( 1, "yaw", Clamp( value, -1, 1 ) )
+
+    elseif name == "Roll" then
+        self:SetInputFloat( 1, "roll", Clamp( value, -1, 1 ) )
+
+    elseif name == "Throttle" then
+        self:SetInputFloat( 1, "throttle", Clamp( value, -1, 1 ) )
+
+    elseif name == "Fire" then
+        self:SetInputBool( 1, "attack", value > 0 )
+
+    elseif name == "WeaponIndex" and self.weaponCount > 0 then
+        self:SelectWeaponIndex( Clamp( value, 1, self.weaponCount ) )
+    end
 end
