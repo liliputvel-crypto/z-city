@@ -1,32 +1,18 @@
--- All armed GTAV helicopters have a minigun and (optionally)
--- homing missiles, so let's code that into a single base class.
+AddCSLuaFile()
 
 ENT.Type = "anim"
-ENT.Base = "base_glide_heli"
+ENT.Base = "base_anim"
+ENT.PrintName = "Missile"
 
-ENT.PrintName = "GTAV Armed Helicopter"
-ENT.Author = "StyledStrike"
+ENT.Spawnable = false
+ENT.AdminOnly = false
+ENT.VJ_ID_Danger = true
 
-if CLIENT then
-    ENT.MinigunFireLoop = ")glide/weapons/mg_shoot_loop.wav"
-    ENT.MinigunSpinLoop = "glide/weapons/minigun_loop.wav"
-
-    ENT.MinigunFireStop = ")glide/weapons/mg_shoot_stop.wav"
-    ENT.MinigunSpinStop = "glide/weapons/minigun_end.wav"
-
-    ENT.BulletOffsets = {}
-    ENT.BulletAngles = {}
-    ENT.MissileOffsets = {}
-end
-
-if SERVER then
-    ENT.BulletDamageMultiplier = 0.6
-end
-
-DEFINE_BASECLASS( "base_glide_heli" )
+ENT.PhysgunDisabled = true
+ENT.DoNotDuplicate = true
+ENT.DisableDuplicator = true
 
 function ENT:SetupDataTables()
-    BaseClass.SetupDataTables( self )
-
-    self:NetworkVar( "Bool", "FiringMinigun" )
+    self:NetworkVar( "Bool", "HasTarget" )
+    self:NetworkVar( "Float", "Effectiveness" )
 end
