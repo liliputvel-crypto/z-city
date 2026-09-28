@@ -1,63 +1,146 @@
 include( "shared.lua" )
 
+DEFINE_BASECLASS( "base_glide" )
+
+ENT.AutomaticFrameAdvance = true
+
 --- Implement this base class function.
-function ENT:ShouldActivateSounds()
-    return self:GetPower() > 0.1
+function ENT:OnPostInitialize()
+    self.streamJSONOverride = nil
 end
 
-local Clamp = math.Clamp
-local Effect = util.Effect
-local EffectData = EffectData
+local GetVolume = Glide.Config.GetVolume
 
 --- Implement this base class function.
-function ENT:OnUpdateParticles()
-    local health = self:GetEngineHealth()
-    if health > 0.5 then return end
-
-    local velocity = self:GetVelocity()
-    local normal = -self:GetForward()
-    local power = self:GetPower()
-
-    health = Clamp( health * 255, 0, 255 )
-
-    for _, pos in ipairs( self.ExhaustPositions ) do
-        local eff = EffectData()
-        eff:SetOrigin( self:LocalToWorld( pos ) )
-        eff:SetNormal( normal )
-        eff:SetColor( health )
-        eff:SetMagnitude( power * 1000 )
-        eff:SetStart( velocity )
-        eff:SetScale( 1 )
-        Effect( "glide_damaged_exhaust", eff, true, true )
+function ENT:OnTurnOn()
+    if self.StartedSound ~= "" then
+        Glide.PlaySoundSet( self.StartedSound, self, GetVolume( "carVolume" ), nil, 85 )
     end
 end
 
-local RealTime = RealTime
-local DrawLight = Glide.DrawLight
-local DrawLightSprite = Glide.DrawLightSprite
+--- Implement this base class function.
+function ENT:OnTurnOff()
+    if self.StoppedSound ~= "" then
+        Glide.PlaySoundSet( self.StoppedSound, self, GetVolume( "carVolume" ), nil, 85 )
+    end
+
+    self:DeactivateSounds()
+end
+
+--- Implement this base class function.
+function ENT:OnDeactivateSounds()
+    if self.stream then
+        self.stream:Destroy()
+        self.stream = nil
+    end
+end
 
 --- Implement this base class function.
 function ENT:OnUpdateMisc()
-    if self:GetDriver() == NULL and self:GetPower() < 0.1 then return end
+    self:OnUpdateAnimations()
+end
 
-    -- Update strobe lights
-    local t = RealTime()
-    local on, pos, color
+local Abs = math.abs
+local Clamp = math.Clamp
+local FrameTime = FrameTime
 
-    t = t % 1
+--- Implement this base class function.
+function ENT:OnUpdateSounds()
+    local sounds = self.sounds
 
-    for i, v in ipairs( self.StrobeLights ) do
-        on = t > v.blinkTime and t < v.blinkTime + ( v.blinkDuration or 0.05 )
+    local dt = FrameTime()
+    local isHonking = self:GetIsHonking()
 
-        if on then
-            pos = self:LocalToWorld( v.offset )
-            color = self.StrobeLightColors[i]
+    if isHonking and self.HornSound then
+        local volume = GetVolume( "hornVolume" )
 
-            if self.StrobeLightRadius > 0 then
-                DrawLight( pos, color, self.StrobeLightRadius )
-            end
-
-            DrawLightSprite( pos, nil, self.StrobeLightSpriteSize, color )
+        if sounds.horn then
+            sounds.horn:ChangeVolume( volume )
+        else
+            local snd = self:CreateLoopingSound( "horn", self.HornSound, 85, self )
+            snd:PlayEx( volume, 100 )
         end
+
+    elseif sounds.horn then
+        if sounds.horn:GetVolume() > 0 then
+            sounds.horn:ChangeVolume( sounds.horn:GetVolume() - dt * 8 )
+        else
+            sounds.horn:Stop()
+            sounds.horn = nil
+        end
+    end
+
+    self:DoWaterSounds()
+
+    if not self:IsEngineOn() then return end
+
+    local stream = self.stream
+
+    if not stream then
+        self.stream = Glide.CreateEngineStream( self )
+
+        if self.streamJSONOverride then
+            self.stream:LoadJSON( self.streamJSONOverride )
+        else
+            self:OnCreateEngineStream( self.stream )
+        end
+
+        self.stream:Play()
+
+        return
+    end
+
+    stream.firstPerson = self.isLocalPlayerInFirstPerson
+
+    local inputs = stream.inputs
+
+    inputs.rpmFraction = self:GetEnginePower()
+    inputs.throttle = Abs( self:GetEngineThrottle() )
+
+    -- Handle damaged engine sounds
+    local health = self:GetEngineHealth()
+
+    if health < 0.4 then
+        if sounds.runDamaged then
+            sounds.runDamaged:ChangePitch( 100 + inputs.rpmFraction * 20 )
+            sounds.runDamaged:ChangeVolume( Clamp( ( 1 - health ) + inputs.throttle, 0, 1 ) * 0.5 )
+        else
+            local snd = self:CreateLoopingSound( "runDamaged", "glide/engines/run_damaged_1.wav", 75, self )
+            snd:PlayEx( 0.5, 100 )
+        end
+
+    elseif sounds.runDamaged then
+        sounds.runDamaged:Stop()
+        sounds.runDamaged = nil
+    end
+end
+
+local Effect = util.Effect
+local EffectData = EffectData
+
+local DEFAULT_ANG = Angle()
+
+--- Implement this base class function.
+function ENT:OnUpdateParticles()
+    self:DoWaterParticles( self:GetEnginePower(), self:GetEngineThrottle() )
+
+    local health = self:GetEngineHealth()
+    if health > 0.5 then return end
+
+    local color = Clamp( health * 255, 0, 255 )
+    local velocity = self:GetVelocity()
+    local scale = 2 - health * 2
+
+    eff = EffectData()
+
+    for _, v in ipairs( self.EngineSmokeStrips ) do
+        eff:SetOrigin( self:LocalToWorld( v.offset ) )
+        eff:SetAngles( self:LocalToWorldAngles( v.angle or DEFAULT_ANG ) )
+        eff:SetStart( velocity )
+        eff:SetColor( color )
+        eff:SetMagnitude( v.width * 1000 )
+        eff:SetScale( scale )
+        eff:SetRadius( self.EngineSmokeMaxZVel )
+        Effect( "glide_damaged_engine", eff, true, true )
     end
 end
