@@ -3,123 +3,87 @@ AddCSLuaFile("shared.lua")
 include("shared.lua")
 
 function ENT:Initialize()
-    self:SetModel(self.Model)
-    self:PhysicsInit(SOLID_VPHYSICS)
-    if SERVER then
-        self:SetMoveType(MOVETYPE_VPHYSICS)
-    end
-    self:SetSolid(SOLID_VPHYSICS)
-    self:SetCollisionGroup(COLLISION_GROUP_WEAPON)
-    self:DrawShadow(true)
-    self:AddEFlags(EFL_IN_SKYBOX)
-    
-    local phys = self:GetPhysicsObject()
-
-    if SERVER and IsValid(phys) then
-        phys:SetMass(10)
-        phys:Wake()
-        phys:EnableMotion(true)
-    end
+	self:SetModel(self.WorldModel)
+	self:PhysicsInit(SOLID_VPHYSICS)
+	self:SetMoveType(MOVETYPE_VPHYSICS)
+	self:SetSolid(SOLID_VPHYSICS)
+	self:SetCollisionGroup(COLLISION_GROUP_WEAPON)
+	self:SetUseType(SIMPLE_USE)
+	self:SetModelScale(self.ModelScale or 0.4)
+	local phys = self:GetPhysicsObject()
+	if IsValid(phys) then
+		phys:Wake()
+		phys:SetMass(1)
+		phys:EnableMotion(true)
+	end
 end
 
-hook.Add("OnEntityCreated", "radioCreate", function( ent )
-	if ent:GetClass() == "ent_hg_hmcd_radio" then
-		SetGlobalEntity("radio",ent)
+function ENT:Use(ply)
+	self:UnBlock()
+	ply:Give("weapon_hg_jam")
+	ply:SelectWeapon("weapon_hg_jam")
+	self:Remove()
+end
+
+function ENT:OnTakeDamage(dmginfo)
+	if dmginfo:GetInflictor() == self then return end
+	if dmginfo:IsDamageType(DMG_BLAST + DMG_BULLET + DMG_BUCKSHOT + DMG_BURN) and math.random(1, 5) == 1 then
+		self:UnBlock()
+		self:EmitSound("Wood_Plank.ImpactHard")
 	end
-end)
+end
 
-util.AddNetworkString("RadioURLInput")
-util.AddNetworkString("PlayRadioSound")
-util.AddNetworkString("RadioChangeValue")
-util.AddNetworkString("RadioChangeVolume")
-util.AddNetworkString("RadioPause")
-util.AddNetworkString("RadioStop")
-util.AddNetworkString("RadioLooping")
-util.AddNetworkString("paint_radio")
+function ENT:Think()
+	if self.Blocking then
+		for key, door in pairs(self.Doors) do
+			if not IsValid(door) then
+				self:UnBlock()
+				break
+			end
 
-net.Receive("RadioURLInput", function(len, ply)
-	local url = net.ReadString()
-	local ent = net.ReadEntity()
-	
-	if ent:GetClass() != "ent_hg_hmcd_radio" or (ent:GetPos():Distance(ply:EyePos()) > 75) then return end
+			door:Fire("lock", "", 0)
+		end
 
-	net.Start("PlayRadioSound")
-	net.WriteString(url)
-	net.WriteInt(ent:EntIndex(),32)
-	net.Broadcast()
-end)
+		if not IsValid(self.Constraint) then
+			self:UnBlock()
+			self:EmitSound("Wood_Plank.ImpactSoft")
+		end
+	end
 
-net.Receive("paint_radio", function(len, ply)
-	local url = net.ReadString()
-	local ent = net.ReadEntity()
+	self:NextThink(CurTime() + .1)
+	return true
+end
 
-	if ent:GetClass() != "ent_hg_hmcd_radio" or (ent:GetPos():Distance(ply:EyePos()) > 75) then return end
+function ENT:UnBlock()
+	if self.Blocking then
+		self.Blocking = false
+		for key, door in pairs(self.Doors) do
+			if IsValid(door) and not self.DoorLocked then door:Fire("unlock", "", 0) end
+		end
 
-	ent:SetTextureURL( url )
+		self.Doors = {}
+		self:EmitSound("Wood_Plank.ImpactSoft")
+		self:EmitSound("Flesh.ImpactSoft")
+		constraint.RemoveAll(self)
+	end
+end
 
-	
-	net.Start("paint_radio")
-		net.WriteString( url )
-		net.WriteEntity( ent )
-	net.Broadcast()
-end)
+function ENT:Block(doors)
+	if not self.Blocking then
+		self.Blocking = true
+		self.Doors = doors
+		self.Constraint = constraint.Weld(self.Doors[1], self, 0, 0, 3000, true, false)
+		self.Constraint.PickupAble = true
+		self:EmitSound("Wood_Plank.ImpactSoft")
+		self:EmitSound("Flesh.ImpactSoft")
+		self:EmitSound("Wood_Plank.ImpactSoft")
+		self:Think()
+	end
+end
 
-net.Receive("RadioChangeValue", function(len, ply)
-	local val = net.ReadFloat()
-	local index = net.ReadInt(32)
-	local ent = Entity(index)
-
-	if ent:GetClass() != "ent_hg_hmcd_radio" or (ent:GetPos():Distance(ply:EyePos()) > 75) then return end
-
-	net.Start("RadioChangeValue")
-	net.WriteFloat(val)
-	net.WriteInt(index,32)
-	net.Broadcast()
-end)
-
-net.Receive("RadioChangeVolume", function(len, ply)
-	local val = net.ReadFloat()
-	local index = net.ReadInt(32)
-	local ent = Entity(index)
-	
-	if ent:GetClass() != "ent_hg_hmcd_radio" or (ent:GetPos():Distance(ply:EyePos()) > 75) then return end
-
-	net.Start("RadioChangeVolume")
-	net.WriteFloat(val)
-	net.WriteInt(index,32)
-	net.Broadcast()
-end)
-
-net.Receive("RadioPause", function(len, ply)
-	local bool = net.ReadBool()
-	local ent = net.ReadEntity()
-	
-	if ent:GetClass() != "ent_hg_hmcd_radio" or (ent:GetPos():Distance(ply:EyePos()) > 75) then return end
-	
-	net.Start("RadioPause")
-		net.WriteBool(bool)
-		net.WriteInt(ent:EntIndex(),32)
-	net.Broadcast()
-end)
-
-net.Receive("RadioLooping", function(len, ply)
-	local bool = net.ReadBool()
-	local ent = net.ReadEntity()
-
-	if ent:GetClass() != "ent_hg_hmcd_radio" or (ent:GetPos():Distance(ply:EyePos()) > 75) then return end
-
-	net.Start("RadioLooping")
-		net.WriteBool(bool)
-		net.WriteInt(ent:EntIndex(),32)
-	net.Broadcast()
-end)
-
-net.Receive("RadioStop", function(len, ply)
-	local ent = net.ReadEntity()
-
-	if ent:GetClass() != "ent_hg_hmcd_radio" or (ent:GetPos():Distance(ply:EyePos()) > 75) then return end
-
-	net.Start("RadioStop")
-		net.WriteInt(ent:EntIndex(),32)
-	net.Broadcast()
-end)
+function ENT:PhysicsCollide(data, physobj)
+	if data.DeltaTime > .1 then
+		self:EmitSound("Wood_Plank.ImpactSoft")
+		self:EmitSound("Flesh.ImpactSoft")
+	end
+end
