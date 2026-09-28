@@ -1,7 +1,8 @@
 ENT.Type = "anim"
 ENT.Base = "base_gmodentity"
-ENT.PrintName = "Brass Knuckles"
+ENT.PrintName = "Flashlight"
 ENT.Category = "ZCity Other"
 ENT.Spawnable = true
-ENT.IconOverride = "vgui/inventory/weapon_brassknuckles"
+ENT.Model = "models/runaway911/props/item/flashlight.mdl"
+ENT.IconOverride = "vgui/hud/hmcd_flash"
 ENT.IsZPickup = true
